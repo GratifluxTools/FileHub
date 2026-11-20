@@ -34,10 +34,10 @@ jobs:
       matrix:
         include:
           - { edition: single,   os: windows-2022,     target: windows, arch: x64,   platform: windows-x64 }
-          - { edition: single,   os: ubuntu-latest,    target: linux,   arch: x64,   platform: linux-x64 }
+          - { edition: single,   os: ubuntu-24.04,       target: linux,   arch: x64,   platform: linux-x64 }
           - { edition: single,   os: ubuntu-24.04-arm, target: linux,   arch: arm64, platform: linux-arm64 }
           - { edition: portable, os: windows-2022,     target: windows, arch: x64,   platform: windows-x64 }
-          - { edition: portable, os: ubuntu-latest,    target: linux,   arch: x64,   platform: linux-x64 }
+          - { edition: portable, os: ubuntu-24.04,       target: linux,   arch: x64,   platform: linux-x64 }
           - { edition: portable, os: ubuntu-24.04-arm, target: linux,   arch: arm64, platform: linux-arm64 }
     name: build (${{ matrix.edition }}, ${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
