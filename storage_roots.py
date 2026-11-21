@@ -58,12 +58,58 @@ def scan_roots():
     return [home_dir()] + external_roots()
 
 
+def volume_label(root: str) -> str:
+    """Windows のボリュームラベル（SSD などの名前）。取れなければ空。"""
+    if platform.system() != "Windows":
+        return ""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(261)
+        ok = ctypes.windll.kernel32.GetVolumeInformationW(root, buf, 261, None, None, None, None, 0)
+        return buf.value if ok else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def display_name(root: str) -> str:
+    """外付けドライブの表示名。ボリュームラベル → ドライブ文字 → フォルダ名の順。"""
+    label = volume_label(root)
+    if label:
+        return label
+    base = os.path.basename(os.path.normpath(root)).rstrip("\\/")
+    return base or root.rstrip("\\/") or root
+
+
+def volume_key(root: str) -> str:
+    """ボリュームを見分ける指紋（つなぎ直しても同じになるよう、ドライブ文字ではなく名前で作る）。"""
+    return "vol:" + display_name(root)
+
+
+def connected_root(dev):
+    """このデバイス（外付けドライブ）が今このPCに接続されていれば、その根のパス。なければ None。"""
+    if not dev or dev["dtype"] != "external":
+        return None
+    for root in external_roots():
+        if dev["fingerprint"]:
+            if dev["fingerprint"] == volume_key(root):
+                return root
+        elif dev["name"] == display_name(root):
+            return root
+    return None
+
+
 def device_for_path(db, path, here_id, device_type="external"):
-    """フォルダが属するデバイスを決める。ホームの中はこのPC、外付けドライブは別の「外付けドライブ」デバイス。"""
+    """フォルダが属するデバイス。ホームの中はこのPC、外付けドライブはそのボリュームのデバイス。"""
     if is_inside_home(path):
         return here_id
     root = next((r for r in external_roots() if is_within(path, r)), None) or path
-    label = os.path.basename(os.path.normpath(root)) or root
-    label = label.rstrip("\\/") or root
-    dev = db.find_device(label, device_type)
-    return dev["id"] if dev else db.add_device(label, device_type, "")
+    key, name = volume_key(root), display_name(root)
+    dev = db.find_device_by_fingerprint(key)
+    if dev:
+        return dev["id"]
+    dev = db.find_device(name, device_type)
+    if dev:  # 以前の登録（指紋なし）には、今の指紋を付けておく
+        if not dev["fingerprint"]:
+            db.set_device_fingerprint(dev["id"], key)
+        return dev["id"]
+    return db.add_device(name, device_type, "", key)

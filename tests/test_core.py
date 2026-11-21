@@ -419,7 +419,7 @@ def test_ui_interactions_search_detail_tags_memo(env):
     with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
         app.main(fake)
     root = fake.add.call_args_list[-1].args[0]
-    body = root.controls[1]
+    body = root.controls[-1]
     tabs = body.content
     search_view = tabs.tabs[0].content
 
@@ -488,7 +488,7 @@ def test_ui_image_op_compress_and_settings(env):
     with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
         app.main(fake)
     root = fake.add.call_args_list[-1].args[0]
-    body = root.controls[1]
+    body = root.controls[-1]
     tabs = body.content
     search_view = tabs.tabs[0].content
     settings_view = tabs.tabs[3].content
@@ -687,7 +687,7 @@ def test_ui_registration_manual_entry_on_first_run(env):
     with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
         app.main(fake)
     root = fake.add.call_args_list[-1].args[0]
-    body = root.controls[1]
+    body = root.controls[-1]
     # 登録画面（戻るボタンがあり、タブは無い）
     assert not hasattr(body.content, "tabs")
     # 初回は現在のPCなので、既定はツリー。「手動で登録」に切り替える
@@ -773,7 +773,7 @@ def test_language_notice_is_in_the_new_language():
     assert i18n.t_for("en", "lang_restart_title") == "Language changed"
 
 
-def test_saving_a_new_language_opens_restart_dialog(env):
+def test_saving_a_new_language_shows_notice_in_the_new_language(env):
     import flet as ft
     import main as app
     mark_initial_scan_done(env)
@@ -782,16 +782,18 @@ def test_saving_a_new_language_opens_restart_dialog(env):
     fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
     with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
         app.main(fake)
-    body = fake.add.call_args_list[-1].args[0].controls[1]
+    root = fake.add.call_args_list[-1].args[0]
+    body = root.controls[-1]
     settings_view = body.content.tabs[3].content
     lang = [c for c in _walk(settings_view) if isinstance(c, ft.Dropdown) and c.label == app.t("set_language")][0]
     lang.value = "ja"
     save = [c for c in _walk(settings_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("btn_save")][0]
     save.on_click(None)
-    shown = fake.dialog
-    assert shown.title.value == "言語を変更しました"
-    assert "再起動" in shown.content.value
+    status = root.controls[1]  # 通知の行（画面の上）
+    assert status.value.startswith("アプリを一度完全に閉じて")
+    assert "再起動" in status.value
     assert json.loads((env["data"] / "config.json").read_text(encoding="utf-8"))["language"] == "ja"
+
 
 
 def _open_app(env):
@@ -803,7 +805,7 @@ def _open_app(env):
     fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
     with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
         app.main(fake)
-    body = fake.add.call_args_list[-1].args[0].controls[1]
+    body = fake.add.call_args_list[-1].args[0].controls[-1]
     return app, fake, body
 
 
@@ -884,3 +886,107 @@ def test_external_drive_gets_its_own_device(env, tmp_path, monkeypatch):
     assert db.device(ext)["dtype"] == EXTERNAL_TYPE and db.device(ext)["name"] == "SSD"
     # 二度目は同じデバイスを使う
     assert storage_roots.device_for_path(db, str(drive / "Movies"), here) == ext
+
+
+def test_delete_other_device_via_confirm_page_and_current_device_is_refused(env):
+    import flet as ft
+    db = make_db(env)
+    other = db.add_device("Old PC", "windows", "", "fp-old")
+    db.add_location("Old loc", str(env["tmp"] / "oldroot"), "local", other, "scan")
+    app, fake, body = _open_app(env)
+    locations_view = body.content.tabs[1].content
+    dels = [c for c in _walk(locations_view) if isinstance(c, ft.IconButton)
+            and c.tooltip == app.t("delete_device")]
+    assert len(dels) >= 2
+    # 各ボタンが持つデバイス（lambda の既定値）で、このPCと他のデバイスを選ぶ
+    here_btn = [b for b in dels if b.on_click.__defaults__[0]["fingerprint"] == app.CUR_FP][0]
+    other_btn = [b for b in dels if b.on_click.__defaults__[0]["fingerprint"] != app.CUR_FP][0]
+    root = fake.add.call_args_list[-1].args[0]
+    # このPCのデバイスは削除できない（上の行に理由が出る）
+    here_btn.on_click(None)
+    assert root.controls[1].value == app.t("cannot_delete_current")
+    # 他のデバイスは、画面で確認してから削除する
+    other_btn.on_click(None)
+    assert any(isinstance(c, ft.ElevatedButton) and c.text == app.t("delete") for c in _walk(body))
+    [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("delete")][0].on_click(None)
+    assert "Old PC" not in [d["name"] for d in db.devices()]
+
+
+def test_clear_index_asks_on_a_page_and_then_clears(env):
+    import flet as ft
+    from scanner import scan_location
+    docs = env["home"] / "Documents"
+    docs.mkdir(exist_ok=True)
+    (docs / "keep.txt").write_text("x", encoding="utf-8")
+    db = make_db(env)
+    lid = db.add_location("Documents", str(docs), "local")
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    app, fake, body = _open_app(env)
+    settings_view = body.content.tabs[3].content
+    [c for c in _walk(settings_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("clear_index")][0].on_click(None)
+    _serializes(body)
+    assert db.count({"include_missing": True})["n"] == 1  # まだ消えていない（確認画面）
+    [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("clear_index")][0].on_click(None)
+    assert db.count({"include_missing": True})["n"] == 0
+
+
+def test_remove_missing_reports_the_count(env):
+    import flet as ft
+    from scanner import scan_location
+    docs = env["home"] / "Documents"
+    docs.mkdir(exist_ok=True)
+    f = docs / "gone.txt"
+    f.write_text("x", encoding="utf-8")
+    db = make_db(env)
+    lid = db.add_location("Documents", str(docs), "local")
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    f.unlink()
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    app, fake, body = _open_app(env)
+    settings_view = body.content.tabs[3].content
+    [c for c in _walk(settings_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("remove_missing")][0].on_click(None)
+    root = fake.add.call_args_list[-1].args[0]
+    assert root.controls[1].value == app.t("removed_missing", n=1)
+    assert db.count({"include_missing": True})["n"] == 0
+
+
+def test_connected_volume_is_selectable_like_this_pc(env, tmp_path, monkeypatch):
+    import flet as ft
+    import storage_roots
+    drive = tmp_path / "SSD"
+    (drive / "Movies").mkdir(parents=True)
+    monkeypatch.setattr(storage_roots, "external_roots", lambda: [str(drive)])
+    db = make_db(env)
+    vol = db.add_device("SSD", "external", "", "vol:SSD")
+    # 接続されている時は、そのボリュームを根にしたツリーを選べる
+    assert storage_roots.connected_root(db.device(vol)) == str(drive)
+    # 接続されていないボリュームは選べない
+    monkeypatch.setattr(storage_roots, "external_roots", lambda: [])
+    assert storage_roots.connected_root(db.device(vol)) is None
+    monkeypatch.setattr(storage_roots, "external_roots", lambda: [str(drive)])
+
+    app, fake, body = _open_app(env)
+    locations_view = body.content.tabs[1].content
+    [c for c in _walk(locations_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("register")][0].on_click(None)
+    reg = body  # 登録画面
+    dd = [c for c in _walk(reg) if isinstance(c, ft.Dropdown) and c.label == app.t("device")][0]
+    dd.value = str(vol)
+    dd.on_change(mock.MagicMock(control=dd))
+    # ツリーの根は、この接続ボリュームだけになる（ホームや他のドライブは出ない）
+    texts = [c.value for c in _walk(reg) if isinstance(c, ft.Text) and isinstance(c.value, str)]
+    assert "SSD" in texts and "Movies" in texts
+    assert "Documents" not in texts
+
+
+def test_volume_identity_and_device_mapping(env, tmp_path, monkeypatch):
+    import storage_roots
+    drive = tmp_path / "BACKUP"
+    (drive / "Docs").mkdir(parents=True)
+    monkeypatch.setattr(storage_roots, "external_roots", lambda: [str(drive)])
+    db = make_db(env)
+    here = db.ensure_current_device("PC", "windows", "fp-here")
+    assert storage_roots.volume_key(str(drive)) == "vol:BACKUP"
+    dev = storage_roots.device_for_path(db, str(drive / "Docs"), here)
+    assert dev != here and db.device(dev)["fingerprint"] == "vol:BACKUP"
+    assert storage_roots.device_for_path(db, str(drive / "Docs"), here) == dev
+    assert storage_roots.connected_root(db.device(dev)) == str(drive)

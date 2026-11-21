@@ -280,6 +280,48 @@ class Database:
     def clear_index(self):
         self._run("DELETE FROM files")
 
+    # ---- 読み込み（transfer から使う） ----
+    def find_device_same(self, name, dtype, account):
+        return self._one("SELECT * FROM devices WHERE name = ? AND dtype = ? AND account = ?",
+                         (name, dtype, account))
+
+    def find_device_by_fingerprint(self, fingerprint):
+        return self._one("SELECT * FROM devices WHERE fingerprint = ?", (fingerprint,))
+
+    def set_device_fingerprint(self, did, fingerprint):
+        self._run("UPDATE devices SET fingerprint = ? WHERE id = ?", (fingerprint, did))
+
+    def find_location_by_root_any(self, root):
+        return self._one("SELECT * FROM locations WHERE root = ?", (root,))
+
+    def merge_file(self, loc_id, f):
+        """ファイル1件を取り込む。既存なら更新し、メモ・メディア情報は空でなければ置き換える。"""
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO files(location_id, relpath, name, ext, category, size, mtime, missing,
+                                     memo, media, scanned_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(location_id, relpath) DO UPDATE SET
+                     name = excluded.name, ext = excluded.ext, category = excluded.category,
+                     size = excluded.size, mtime = excluded.mtime,
+                     memo = CASE WHEN excluded.memo <> '' THEN excluded.memo ELSE files.memo END,
+                     media = CASE WHEN excluded.media <> '{}' THEN excluded.media ELSE files.media END""",
+                (loc_id, f["relpath"], f["name"], f["ext"], f["category"], f["size"], f["mtime"],
+                 f.get("missing") or 0, f.get("memo") or "", f.get("media") or "{}", f.get("scanned_at") or 0))
+            self._conn.commit()
+            row = self._conn.execute("SELECT id FROM files WHERE location_id = ? AND relpath = ?",
+                                     (loc_id, f["relpath"])).fetchone()
+            return row["id"]
+
+    def ensure_tag(self, name):
+        with self._lock:
+            self._conn.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (name,))
+            self._conn.commit()
+            return self._conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()[0]
+
+    def attach_tag(self, fid, tid):
+        self._run("INSERT OR IGNORE INTO file_tags(file_id, tag_id) VALUES (?,?)", (fid, tid))
+
     # ---- 検索 ----
     def _where(self, flt):
         clauses, args = [], []

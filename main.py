@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import shutil
 import sqlite3
@@ -26,8 +27,9 @@ from paths import home_dir
 from scanner import (ScanOptions, detect_default_folders, detect_kind, index_abs,
                      list_child_dirs, parse_manual_lines, relocate_record, scan_location)
 from single_instance import acquire as acquire_instance, activate_existing_window
-from storage_roots import device_for_path, is_allowed_root, scan_roots
+from storage_roots import connected_root, device_for_path, is_allowed_root, scan_roots
 from text_io import extract_office_text, read_text, write_text
+import transfer
 from updater import REPO_URL, check_latest
 
 try:
@@ -131,7 +133,7 @@ def main(page: ft.Page):
     cfg = Config.load(cfg_path)
     set_language(cfg.language)
     db = Database(os.path.join(ddir, "index.db"))
-    db.ensure_current_device(current_name(), current_type(), CUR_FP)
+    here_id = db.ensure_current_device(current_name(), current_type(), CUR_FP)
     cache_dir = os.path.join(ddir, "cache")
     os.makedirs(cache_dir, exist_ok=True)
 
@@ -140,35 +142,52 @@ def main(page: ft.Page):
     dir_callback = {"fn": None}
     save_callback = {"fn": None}
 
-    def snack(msg):
-        page.snack_bar = ft.SnackBar(ft.Text(msg))
-        page.snack_bar.open = True
+    # 通知は画面の上の行に出す（ダイアログ・スナックバーは使わない）
+    status = ft.Text(size=13, color=GREY)
+    scan_text = ft.Text(size=13)
+    scan_state = {"cancel": None}
+
+    def snack(msg, error=False):
+        status.value = msg
+        status.color = RED if error else GREY
         page.update()
 
-    def open_dialog(title, content, actions):
-        page.dialog = ft.AlertDialog(modal=True, title=ft.Text(title), content=content, actions=actions)
-        page.dialog.open = True
-        page.update()
-
-    def close_dialog(_=None):
-        if page.dialog is not None:
-            page.dialog.open = False
+    def cancel_scan():
+        ev = scan_state["cancel"]
+        if ev is not None:
+            ev.set()
+            scan_text.value = t("scan_cancelling")
             page.update()
 
-    def ask_text(title, label, initial, on_ok):
+    scan_bar = ft.Row([scan_text, ft.ProgressBar(width=260),
+                       ft.ElevatedButton(t("cancel"), icon=ft.Icons.CLOSE, on_click=lambda _: cancel_scan())],
+                      visible=False, wrap=True)
+
+    def confirm_page(title, message, ok_label, on_ok, back=None):
+        """確認は画面で行う（OK で on_ok を実行し、キャンセルで元に戻る）。"""
+        show_screen(title, [
+            ft.Text(message, size=14),
+            ft.Row([
+                ft.ElevatedButton(t("cancel"), icon=ft.Icons.CLOSE, on_click=lambda _: (back or show_tabs)()),
+                ft.ElevatedButton(ok_label, icon=ft.Icons.CHECK, on_click=lambda _: on_ok()),
+            ], wrap=True),
+        ], back=back)
+
+    def ask_text(title, label, initial, on_ok, back=None):
         tf = ft.TextField(label=label, value=initial, autofocus=True, width=420)
 
         def ok(_=None):
             value = (tf.value or "").strip()
-            close_dialog()
             if value:
                 on_ok(value)
+            else:
+                snack(t("invalid_input"), error=True)
 
         tf.on_submit = ok
-        open_dialog(title, tf, [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("ok"), on_click=ok),
-        ])
+        show_screen(title, [tf, ft.Row([
+            ft.ElevatedButton(t("cancel"), icon=ft.Icons.CLOSE, on_click=lambda _: (back or show_tabs)()),
+            ft.ElevatedButton(t("ok"), icon=ft.Icons.CHECK, on_click=ok),
+        ], wrap=True)], back=back)
 
     def run_bg(work, busy_msg=None):
         """重い処理をバックグラウンドで行い、終わったら結果を表示して一覧を更新する。"""
@@ -642,10 +661,8 @@ def main(page: ft.Page):
             items = [ft.Text(n, size=12, selectable=True) for n in names[:300]]
             if len(names) > 300:
                 items.append(ft.Text(t("and_more", n=len(names) - 300), size=12, color=GREY))
-            open_dialog(t("archive_contents"),
-                        ft.Container(width=560, height=380,
-                                     content=ft.Column(items, scroll=ft.ScrollMode.AUTO)),
-                        [ft.TextButton(t("close"), on_click=close_dialog)])
+            show_screen(t("archive_contents"), [ft.Column(items, scroll=ft.ScrollMode.AUTO)],
+                        back=lambda: show_detail(rec["id"]))
 
         def extract(_):
             dest = unique_path(archive_base(path))
@@ -792,7 +809,7 @@ def main(page: ft.Page):
             snack(t("renamed"))
             show_detail(rec["id"])
 
-        ask_text(t("rename"), t("name"), rec["name"], do)
+        ask_text(t("rename"), t("name"), rec["name"], do, back=lambda: show_detail(rec["id"]))
 
     def move_action(rec):
         def got(dest_dir):
@@ -817,15 +834,15 @@ def main(page: ft.Page):
         pick_dir(got)
 
     def delete_action(rec):
-        def do(_):
-            close_dialog()
+        def do():
             try:
                 if cfg.use_trash and send2trash is not None:
                     send2trash(rec["path"])
                 else:
                     os.remove(rec["path"])
             except Exception as ex:  # noqa: BLE001
-                snack(t("delete_failed", ex=ex))
+                show_detail(rec["id"])
+                snack(t("delete_failed", ex=ex), error=True)
                 return
             db.delete_file(rec["id"])
             selected.discard(rec["id"])
@@ -833,10 +850,8 @@ def main(page: ft.Page):
             refresh_all()
             snack(t("deleted"))
 
-        open_dialog(t("confirm"), ft.Text(t("delete_confirm", name=rec["name"])), [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("delete"), on_click=do),
-        ])
+        confirm_page(t("confirm"), t("delete_confirm", name=rec["name"]), t("delete"), do,
+                     back=lambda: show_detail(rec["id"]))
 
     def remove_from_index(rec):
         db.delete_file(rec["id"])
@@ -852,26 +867,20 @@ def main(page: ft.Page):
 
     def start_scan(loc_ids):
         if not loc_ids:
-            snack(t("locations_empty"))
+            snack(t("locations_empty"), error=True)
             return
         if scan_state["cancel"] is not None:
-            snack(t("scan_running"))
+            snack(t("scan_running"), error=True)
             return
         cancel_ev = threading.Event()
         scan_state["cancel"] = cancel_ev
-        status = ft.Text(t("scan_starting"))
-
-        def cancel(_):
-            cancel_ev.set()
-            status.value = t("scan_cancelling")
-            page.update()
-
-        open_dialog(t("scanning"), ft.Column([status, ft.ProgressBar(width=420)], tight=True),
-                    [ft.TextButton(t("cancel"), on_click=cancel)])
+        scan_text.value = t("scan_starting")
+        scan_bar.visible = True
+        page.update()
         opts = make_scan_options()
 
         def set_status(name, n):
-            status.value = t("scan_progress", name=name, n=n)
+            scan_text.value = t("scan_progress", name=name, n=n)
             page.update()
 
         def worker():
@@ -897,7 +906,7 @@ def main(page: ft.Page):
             scan_state["cancel"] = None
 
             def done():
-                close_dialog()
+                scan_bar.visible = False
                 snack(t("scan_cancelled") if cancelled else t("scan_done", n=total))
                 refresh_all()
 
@@ -938,24 +947,21 @@ def main(page: ft.Page):
 
     def rename_location(loc):
         ask_text(t("rename"), t("name"), loc["name"],
-                 lambda name: (db.update_location(loc["id"], name=name), refresh_all()))
+                 lambda name: (db.update_location(loc["id"], name=name), show_tabs(), refresh_all()))
 
     def delete_location(lid):
         loc = db.location(lid)
         if loc is None:
             return
 
-        def do(_):
-            close_dialog()
+        def do():
             db.delete_location(lid)
             selected.clear()
+            show_tabs()
             refresh_all()
             snack(t("location_deleted"))
 
-        open_dialog(t("confirm"), ft.Text(t("delete_location_confirm", name=loc["name"])), [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("delete"), on_click=do),
-        ])
+        confirm_page(t("confirm"), t("delete_location_confirm", name=loc["name"]), t("delete"), do)
 
     def add_manual_files_dialog(lid):
         files_tf = ft.TextField(label=t("manual_files_label"), hint_text=t("manual_files_hint"),
@@ -963,16 +969,16 @@ def main(page: ft.Page):
 
         def ok(_):
             rows = parse_manual_lines(files_tf.value)
-            close_dialog()
             if rows:
                 db.upsert_files(lid, rows, time.time())
-            snack(t("manual_added", n=len(rows)))
+            show_tabs()
             refresh_all()
+            snack(t("manual_added", n=len(rows)))
 
-        open_dialog(t("add_files"), files_tf, [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("save"), on_click=ok),
-        ])
+        show_screen(t("add_files"), [files_tf, ft.Row([
+            ft.ElevatedButton(t("cancel"), icon=ft.Icons.CLOSE, on_click=lambda _: show_tabs()),
+            ft.ElevatedButton(t("save"), icon=ft.Icons.SAVE, on_click=ok),
+        ], wrap=True)])
 
     def loc_card(loc):
         manual = loc["mode"] == "manual"
@@ -1041,27 +1047,24 @@ def main(page: ft.Page):
 
     def delete_device(d):
         if d["fingerprint"] == CUR_FP:
-            snack(t("cannot_delete_current"))
+            snack(t("cannot_delete_current"), error=True)
             return
 
-        def do(_):
-            close_dialog()
+        def do():
             db.delete_device(d["id"])
             selected.clear()
+            show_tabs()
             refresh_all()
             snack(t("device_deleted"))
 
-        open_dialog(t("confirm"), ft.Text(t("delete_device_confirm", name=d["name"])), [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("delete"), on_click=do),
-        ])
+        confirm_page(t("confirm"), t("delete_device_confirm", name=d["name"]), t("delete"), do)
 
     # ---------- 登録画面 ----------
     reg_state = {"device": None, "sel": set(), "mode": "tree"}
     reg_host = ft.Column(spacing=8)
 
     def open_registration(defaults=False):
-        reg_state["device"] = db.ensure_current_device(current_name(), current_type(), CUR_FP)
+        reg_state["device"] = here_id
         reg_state["mode"] = "tree"
         if defaults:
             registered = {norm_key(l["root"]) for l in db.locations() if l["mode"] == "scan"}
@@ -1080,11 +1083,12 @@ def main(page: ft.Page):
         build_registration()
 
     def build_registration():
-        devs = db.devices()
-        devs = sorted(devs, key=lambda d: d["fingerprint"] != CUR_FP)
+        devs = sorted(db.devices(), key=lambda d: d["fingerprint"] != CUR_FP)
         dev_id = reg_state["device"]
         dev = db.device(dev_id) if dev_id else None
-        is_here = bool(dev and dev["fingerprint"] == CUR_FP)
+        # 外付けドライブは、今このPCに接続されている時だけ「このPC」と同じように選べる
+        vol_root = connected_root(dev) if dev else None
+        is_here = bool(dev and (dev["fingerprint"] == CUR_FP or vol_root))
         if not is_here:
             reg_state["mode"] = "manual"
 
@@ -1097,7 +1101,8 @@ def main(page: ft.Page):
             options=[ft.dropdown.Option(key=str(d["id"]), text=device_title(
                 d["name"], d["fingerprint"], d["account"], d["dtype"])) for d in devs])
         controls = [ft.Row([dropdown, ft.ElevatedButton(t("add_device"), icon=ft.Icons.ADD,
-                                                         on_click=lambda _: new_device_dialog(back=show_registration))], wrap=True)]
+                                                         on_click=lambda _: new_device_dialog(back=show_registration))],
+                           wrap=True)]
         if is_here:
             def set_mode(m):
                 reg_state["mode"] = m
@@ -1110,7 +1115,7 @@ def main(page: ft.Page):
                                   on_click=lambda _: set_mode("manual")),
             ], wrap=True))
             if reg_state["mode"] == "tree":
-                controls.append(tree_panel())
+                controls.append(tree_panel([vol_root] if vol_root else scan_roots()))
             else:
                 controls.append(manual_panel(dev_id, True))
         else:
@@ -1119,7 +1124,7 @@ def main(page: ft.Page):
         reg_host.controls = controls
         page.update()
 
-    def tree_panel():
+    def tree_panel(roots):
         opts = make_scan_options()
         count_text = ft.Text(t("selected_count", n=len(reg_state["sel"])))
 
@@ -1127,7 +1132,7 @@ def main(page: ft.Page):
             count_text.value = t("selected_count", n=len(reg_state["sel"]))
             page.update()
 
-        tree = FolderTreeView(scan_roots(), lambda p: list_child_dirs(p, opts), reg_state, changed,
+        tree = FolderTreeView(roots, lambda p: list_child_dirs(p, opts), reg_state, changed,
                               empty_text=t("no_subfolders"), page=page)
 
         def hidden_changed(e):
@@ -1252,8 +1257,9 @@ def main(page: ft.Page):
             try:
                 db.rename_tag(tg["id"], name)
             except sqlite3.IntegrityError:
-                snack(t("tag_exists"))
+                snack(t("tag_exists"), error=True)
                 return
+            show_tabs()
             refresh_all()
 
         ask_text(t("rename"), t("tag_name"), tg["name"], do)
@@ -1280,6 +1286,55 @@ def main(page: ft.Page):
     tags_view = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, controls=[
         ft.Text(t("tags_help"), size=12, color=GREY), tags_col,
     ])
+
+    # ---------- データの書き出し・読み込み（別のPCのFileHubへ移す） ----------
+    file_callback = {"fn": None}
+
+    def on_file_result(e):
+        fn = file_callback["fn"]
+        file_callback["fn"] = None
+        if fn and e.files:
+            fn(e.files[0].path)
+
+    file_picker = ft.FilePicker(on_result=on_file_result)
+    page.overlay.append(file_picker)
+
+    def export_all_data(_=None):
+        data = transfer.export_all(db)
+
+        def write(path):
+            if not path.lower().endswith(".json"):
+                path += ".json"
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False)
+                snack(t("export_done", n=len(data["files"]), path=path))
+            except OSError as ex:
+                snack(t("op_failed", ex=ex), error=True)
+
+        save_callback["fn"] = write
+        save_picker.save_file(file_name="filehub-export.json")
+
+    def do_import(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            counts = transfer.import_all(db, data, CUR_FP, here_id)
+        except Exception as ex:  # noqa: BLE001 - 読めない・違うファイルなどを分かりやすく伝える
+            show_tabs()
+            snack(t("import_failed", ex=ex), error=True)
+            return
+        show_tabs()
+        refresh_all()
+        snack(t("import_done", **counts))
+
+    def import_data(_=None):
+        def got(path):
+            confirm_page(t("import_title"), t("import_confirm"), t("import_run"),
+                         lambda: do_import(path), back=show_tabs)
+
+        file_callback["fn"] = got
+        file_picker.pick_files(dialog_title=t("import_pick"), allowed_extensions=["json"])
 
     # ---------- 設定 ----------
     s_lang = ft.Dropdown(label=t("set_language"), value=cfg.language, width=200, options=[
@@ -1308,29 +1363,25 @@ def main(page: ft.Page):
         cfg.save(cfg_path)
         if lang_changed:
             # 変更後の言語で案内する（今の画面の言語ではなく、次回から切り替わる言語で）
-            open_dialog(t_for(new_lang, "lang_restart_title"),
-                        ft.Text(t_for(new_lang, "lang_restart")),
-                        [ft.ElevatedButton(t_for(new_lang, "ok"), on_click=close_dialog)])
+            snack(t_for(new_lang, "lang_restart"))
         else:
             snack(t("saved"))
 
     def remove_missing(_):
+        n = db.count({"include_missing": True})["missing"]
         db.delete_missing()
         refresh_all()
-        snack(t("saved"))
+        snack(t("removed_missing", n=n))
 
     def clear_index(_):
-        def do(_):
-            close_dialog()
+        def do():
             db.clear_index()
             selected.clear()
+            show_tabs()
             refresh_all()
             snack(t("cleared"))
 
-        open_dialog(t("confirm"), ft.Text(t("clear_index_confirm")), [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("clear_index"), on_click=do),
-        ])
+        confirm_page(t("confirm"), t("clear_index_confirm"), t("clear_index"), do, back=show_tabs)
 
     update_status = ft.Text(t("version_now", v=__version__))
     latest_url = [""]
@@ -1375,6 +1426,8 @@ def main(page: ft.Page):
         ft.Row([
             ft.ElevatedButton(t("remove_missing"), icon=ft.Icons.DELETE_SWEEP, on_click=remove_missing),
             ft.ElevatedButton(t("clear_index"), icon=ft.Icons.CLEAR_ALL, on_click=clear_index),
+            ft.ElevatedButton(t("export_data"), icon=ft.Icons.UPLOAD, on_click=export_all_data),
+            ft.ElevatedButton(t("import_data"), icon=ft.Icons.DOWNLOAD, on_click=import_data),
         ], wrap=True),
         ft.Divider(),
         ft.Text(t("about"), weight=ft.FontWeight.BOLD),
@@ -1406,6 +1459,8 @@ def main(page: ft.Page):
     page.add(ft.Column(expand=True, controls=[
         ft.Row([ft.Text("File Hub", size=18, weight=ft.FontWeight.BOLD),
                 ft.Text(edition_label, size=12, color=GREY)]),
+        status,
+        scan_bar,
         body,
     ]))
     refresh_all()
