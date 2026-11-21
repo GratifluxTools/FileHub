@@ -171,3 +171,43 @@ def relocate_record(db, fid, new_abs):
     ext = get_ext(name)
     db.update_file_record(fid, loc["id"], rel, name, ext, category_of(ext), st.st_size, st.st_mtime)
     return fid
+
+
+def list_child_dirs(path, opts):
+    """path 直下のフォルダ（除外ルールを適用済み・名前順）。ツリー表示用。"""
+    names_lower = {n.lower() for n in opts.exclude_names}
+    skip_norm = {norm(p) for p in opts.skip_paths}
+    out = []
+    try:
+        it = os.scandir(path)
+    except OSError:
+        return out
+    with it:
+        for entry in it:
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode) or _is_system(st):
+                continue
+            if not opts.include_hidden and _is_hidden(entry.name, st):
+                continue
+            if _skip_dir(entry.name, entry.path, names_lower, opts, skip_norm):
+                continue
+            out.append(entry.path)
+    return sorted(out, key=lambda p: os.path.basename(p).lower())
+
+
+def parse_manual_lines(text):
+    """手入力のファイル一覧（1行に1つ、相対パス）を索引の行に変換する。フォルダ（末尾が / ）と重複は除く。"""
+    from categories import category_of as _cat
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        rel = line.strip().replace("\\", "/").lstrip("/")
+        if not rel or rel.endswith("/") or rel in seen:
+            continue
+        seen.add(rel)
+        name = rel.rsplit("/", 1)[-1]
+        ext = get_ext(name)
+        out.append((rel, name, ext, _cat(ext), 0, 0.0))
+    return out

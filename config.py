@@ -33,7 +33,7 @@ def data_dir() -> str:
 @dataclass
 class Config:
     language: str = "en"
-    preview_kb: int = 512
+    preview_mb: int = 100
     exclude_names: list = field(default_factory=lambda: list(DEFAULT_EXCLUDE))
     include_hidden: bool = False
     exclude_appdata: bool = True

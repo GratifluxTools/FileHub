@@ -1,4 +1,8 @@
-"""索引データベース（SQLite）。実ファイルは移動・変更せず、場所・タグ・リンク・メモなどの情報だけを持つ。"""
+"""索引データベース（SQLite）。実ファイルは移動・変更せず、デバイス・場所・タグ・リンク・メモなどを持つ。
+
+- devices   : 親デバイス（このPC・他のPC・Google Drive など）
+- locations : ファイルがある場所。mode が 'scan'（フォルダを走査）か 'manual'（手入力の一覧）
+"""
 import json
 import os
 import sqlite3
@@ -8,12 +12,22 @@ import time
 from paths import is_within, join_path, norm
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    dtype TEXT NOT NULL DEFAULT 'other',
+    account TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT UNIQUE,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS locations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'local',
     root TEXT NOT NULL UNIQUE,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    device_id INTEGER,
+    mode TEXT NOT NULL DEFAULT 'scan'
 );
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +70,14 @@ SORTS = {
     "path": "l.name COLLATE NOCASE, f.relpath COLLATE NOCASE",
 }
 
+LOC_SELECT = """
+    SELECT l.*, d.name AS device_name, d.dtype AS device_dtype,
+           d.account AS device_account, d.fingerprint AS device_fp,
+           (SELECT COUNT(*) FROM files f WHERE f.location_id = l.id) AS total,
+           (SELECT COUNT(*) FROM files f WHERE f.location_id = l.id AND f.missing = 1) AS missing
+    FROM locations l LEFT JOIN devices d ON d.id = l.device_id
+"""
+
 
 def escape_like(text: str) -> str:
     return text.replace("!", "!!").replace("%", "!%").replace("_", "!_")
@@ -68,7 +90,16 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self):
+        """0.1.x の索引（devices などが無い）を新しい形に合わせる。"""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(locations)").fetchall()}
+        if "device_id" not in cols:
+            self._conn.execute("ALTER TABLE locations ADD COLUMN device_id INTEGER")
+        if "mode" not in cols:
+            self._conn.execute("ALTER TABLE locations ADD COLUMN mode TEXT NOT NULL DEFAULT 'scan'")
 
     # ---- 低レベル ----
     def _rows(self, sql, args=()):
@@ -90,30 +121,65 @@ class Database:
             self._conn.executemany(sql, seq)
             self._conn.commit()
 
+    # ---- デバイス ----
+    def devices(self):
+        return self._rows("""
+            SELECT d.*, (SELECT COUNT(*) FROM locations l WHERE l.device_id = d.id) AS locs
+            FROM devices d ORDER BY d.id""")
+
+    def device(self, did):
+        return self._one("SELECT * FROM devices WHERE id = ?", (did,))
+
+    def add_device(self, name, dtype, account="", fingerprint=None):
+        return self._run(
+            "INSERT INTO devices(name, dtype, account, fingerprint, created_at) VALUES (?,?,?,?,?)",
+            (name, dtype, account, fingerprint, time.time()))
+
+    def update_device(self, did, name, account):
+        self._run("UPDATE devices SET name = ?, account = ? WHERE id = ?", (name, account, did))
+
+    def delete_device(self, did):
+        """デバイスと、その下の場所（索引の情報）を消す。ディスク上のファイルは消さない。"""
+        with self._lock:
+            self._conn.execute("DELETE FROM locations WHERE device_id = ?", (did,))
+            self._conn.execute("DELETE FROM devices WHERE id = ?", (did,))
+            self._conn.commit()
+
+    def ensure_current_device(self, name, dtype, fingerprint):
+        """このPCのデバイスを用意する。紐付けの無い場所は、このPCのものとして扱う。"""
+        with self._lock:
+            row = self._conn.execute("SELECT id FROM devices WHERE fingerprint = ?", (fingerprint,)).fetchone()
+            if row:
+                did = row["id"]
+            else:
+                cur = self._conn.execute(
+                    "INSERT INTO devices(name, dtype, account, fingerprint, created_at) VALUES (?,?,?,?,?)",
+                    (name, dtype, "", fingerprint, time.time()))
+                did = cur.lastrowid
+            self._conn.execute("UPDATE locations SET device_id = ? WHERE device_id IS NULL", (did,))
+            self._conn.commit()
+            return did
+
     # ---- 場所（ロケーション） ----
     def locations(self):
-        return self._rows("""
-            SELECT l.*,
-              (SELECT COUNT(*) FROM files f WHERE f.location_id = l.id) AS total,
-              (SELECT COUNT(*) FROM files f WHERE f.location_id = l.id AND f.missing = 1) AS missing
-            FROM locations l ORDER BY l.name COLLATE NOCASE, l.id""")
+        return self._rows(LOC_SELECT + " ORDER BY l.name COLLATE NOCASE, l.id")
 
     def location(self, lid):
-        return self._one("SELECT * FROM locations WHERE id = ?", (lid,))
+        return self._one(LOC_SELECT + " WHERE l.id = ?", (lid,))
 
     def find_location_by_root(self, root):
-        for loc in self._rows("SELECT * FROM locations"):
+        for loc in self._rows("SELECT id, root FROM locations WHERE mode = 'scan'"):
             if norm(loc["root"]) == norm(root):
                 return loc
         return None
 
-    def add_location(self, name, root, kind):
+    def add_location(self, name, root, kind, device_id=None, mode="scan"):
         return self._run(
-            "INSERT INTO locations(name, kind, root, created_at) VALUES (?,?,?,?)",
-            (name, kind, root, time.time()))
+            "INSERT INTO locations(name, kind, root, created_at, device_id, mode) VALUES (?,?,?,?,?,?)",
+            (name, kind, root, time.time(), device_id, mode))
 
     def update_location(self, lid, **fields):
-        allowed = {"name", "kind", "root"}
+        allowed = {"name", "kind", "root", "device_id"}
         cols = [k for k in fields if k in allowed]
         if cols:
             sql = "UPDATE locations SET " + ", ".join(f"{c} = ?" for c in cols) + " WHERE id = ?"
@@ -123,20 +189,19 @@ class Database:
         self._run("DELETE FROM locations WHERE id = ?", (lid,))
 
     def find_location_for(self, abs_path):
-        """絶対パスが属する場所と、その場所からの相対パスを返す（最も深く一致する場所を選ぶ）。"""
+        """絶対パスが属する走査対象の場所と、その場所からの相対パスを返す（最も深く一致する場所を選ぶ）。"""
         best = None
-        for loc in self._rows("SELECT * FROM locations"):
-            if is_within(abs_path, loc["root"]):
-                if best is None or len(loc["root"]) > len(best["root"]):
-                    best = loc
+        for loc in self._rows("SELECT id, root FROM locations WHERE mode = 'scan'"):
+            if is_within(abs_path, loc["root"]) and (best is None or len(loc["root"]) > len(best["root"])):
+                best = loc
         if best is None:
             return None
         rel = os.path.relpath(abs_path, best["root"]).replace(os.sep, "/")
         return best, rel
 
     def find_overlap(self, root, exclude_id=None):
-        """新しい場所が既存の場所と重なる（同じ・親子関係）場合、その場所を返す。"""
-        for loc in self._rows("SELECT id, name, root FROM locations"):
+        """新しい場所が既存の走査対象と重なる（同じ・親子関係）場合、その場所を返す。"""
+        for loc in self._rows("SELECT id, name, root FROM locations WHERE mode = 'scan'"):
             if loc["id"] == exclude_id:
                 continue
             if is_within(root, loc["root"]) or is_within(loc["root"], root):
@@ -161,7 +226,7 @@ class Database:
         return row["id"] if row else None
 
     def stale_files(self, loc_id, before):
-        """今回のスキャンで見つからなかった（古いままの）ファイル。"""
+        """今回のスキャンで触れなかった（古いままの）ファイル。"""
         return self._rows("""
             SELECT f.id, f.relpath, f.missing, l.root FROM files f
             JOIN locations l ON l.id = f.location_id
@@ -173,8 +238,12 @@ class Database:
 
     def get_file(self, fid):
         row = self._one("""
-            SELECT f.*, l.name AS location_name, l.root AS root, l.kind AS location_kind
-            FROM files f JOIN locations l ON l.id = f.location_id WHERE f.id = ?""", (fid,))
+            SELECT f.*, l.name AS location_name, l.root AS root, l.mode AS location_mode,
+                   l.device_id AS device_id, d.name AS device_name, d.dtype AS device_dtype,
+                   d.account AS device_account, d.fingerprint AS device_fp
+            FROM files f JOIN locations l ON l.id = f.location_id
+            LEFT JOIN devices d ON d.id = l.device_id
+            WHERE f.id = ?""", (fid,))
         if row:
             row["path"] = join_path(row["root"], row["relpath"])
             row["media"] = json.loads(row["media"] or "{}")
@@ -239,6 +308,9 @@ class Database:
         if flt.get("location_id"):
             clauses.append("f.location_id = ?")
             args.append(flt["location_id"])
+        if flt.get("device_id"):
+            clauses.append("l.device_id = ?")
+            args.append(flt["device_id"])
         if not flt.get("include_missing"):
             clauses.append("f.missing = 0")
         for tid in flt.get("tags") or []:
@@ -251,7 +323,7 @@ class Database:
         order = SORTS.get(flt.get("sort"), SORTS["name"])
         rows = self._rows(f"""
             SELECT f.id, f.relpath, f.name, f.ext, f.category, f.size, f.mtime, f.missing, f.memo,
-                   l.name AS location_name, l.root AS root,
+                   l.name AS location_name, l.root AS root, l.mode AS location_mode,
                    (SELECT GROUP_CONCAT(tg.name, ', ') FROM file_tags ft
                     JOIN tags tg ON tg.id = ft.tag_id WHERE ft.file_id = f.id) AS tags
             FROM files f JOIN locations l ON l.id = f.location_id

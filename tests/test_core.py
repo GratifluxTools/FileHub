@@ -362,6 +362,7 @@ def test_ui_builds_without_error(env):
     db = make_db(env)
     lid = db.add_location("Documents", str(docs), "local")
     scan_location(db, db.location(lid), opts(), threading.Event())
+    mark_initial_scan_done(env)
     fake = mock.MagicMock()
     fake.overlay = []
     fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
@@ -369,6 +370,11 @@ def test_ui_builds_without_error(env):
         app.main(fake)
     added = [c.args[0] for c in fake.add.call_args_list]
     assert added, "page.add was not called"
+
+
+def mark_initial_scan_done(env):
+    import json
+    (env["data"] / "config.json").write_text(json.dumps({"initial_scan_done": True}), encoding="utf-8")
 
 
 def _walk(control):
@@ -405,6 +411,7 @@ def test_ui_interactions_search_detail_tags_memo(env):
     lid = db.add_location("Documents", str(docs), "local")
     scan_location(db, db.location(lid), opts(), threading.Event())
 
+    mark_initial_scan_done(env)
     fake = mock.MagicMock()
     fake.overlay = []
     fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
@@ -471,6 +478,8 @@ def test_ui_image_op_compress_and_settings(env):
     lid = db.add_location("Documents", str(docs), "local")
     scan_location(db, db.location(lid), opts(), threading.Event())
 
+    mark_initial_scan_done(env)
+    mark_initial_scan_done(env)
     fake = mock.MagicMock()
     fake.overlay = []
     fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
@@ -533,3 +542,190 @@ def test_portable_data_dir_and_edition(env, monkeypatch):
     monkeypatch.delenv("FILEHUB_DATA_DIR")
     monkeypatch.setenv("FLET_APP_STORAGE_DATA", str(env["data"]))
     assert config.data_dir() == str(env["data"])
+
+
+# ---------- 0.2 の追加機能 ----------
+def test_preview_default_is_100mb_and_old_keys_ignored(env, tmp_path):
+    import json
+    from config import Config
+    assert Config().preview_mb == 100
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"preview_kb": 512, "preview_mb": 100}), encoding="utf-8")
+    assert Config.load(str(p)).preview_mb == 100
+
+
+def test_folder_tree_check_and_uncheck_rules(tmp_path):
+    from folder_tree import check, covered, minimal, uncheck
+    from scanner import ScanOptions, list_child_dirs
+    root = tmp_path / "home"
+    (root / "A" / "A1" / "deep").mkdir(parents=True)
+    (root / "A" / "A2").mkdir()
+    (root / "B").mkdir()
+    lister = lambda p: list_child_dirs(p, ScanOptions())  # noqa: E731
+    A, A1, A2, B = (str(root / x) for x in ("A", "A/A1", "A/A2", "B"))
+
+    sel = check(A, set())
+    assert sel == {A} and covered(A1, sel) and not covered(B, sel)
+    # 上位が選ばれたまま、下位の一つを外すと、上位は兄弟に分解される
+    sel = uncheck(A1, sel, lister)
+    assert covered(A2, sel) and not covered(A1, sel) and covered(str(root / "A"), {A}) is True
+    assert A1 not in sel
+    # 上位を外すと、下位もすべて外れる
+    assert uncheck(A, {A, B}, lister) == {B}
+    # 下位を先に選んでから上位を選ぶと、下位は吸収される
+    sel = check(A1, set())
+    sel = check(A, sel)
+    assert sel == {A}
+    # 上位に含まれるものは登録の一覧から外す
+    assert sorted(minimal({A, A1, B})) == sorted([A, B])
+
+
+def test_list_child_dirs_skips_hidden_and_appdata(env):
+    from scanner import ScanOptions, list_child_dirs
+    home = env["home"]
+    for name in ("Docs", ".hidden", "AppData", "node_modules", "Pics"):
+        (home / name).mkdir()
+    (home / "file.txt").write_text("x")
+    names = [os.path.basename(p) for p in list_child_dirs(str(home), ScanOptions(
+        exclude_names={"node_modules"}, include_hidden=False, exclude_appdata=True))]
+    assert names == ["Docs", "Pics"]
+    names = [os.path.basename(p) for p in list_child_dirs(str(home), ScanOptions(
+        exclude_names=set(), include_hidden=True, exclude_appdata=False))]
+    assert names == [".hidden", "AppData", "Docs", "node_modules", "Pics"]
+
+
+def test_devices_migration_and_current_device(env):
+    import sqlite3
+    from db import Database
+    path = env["data"] / "index.db"
+    # 0.1.x の索引（devices・device_id・mode が無い）を作る
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'local', root TEXT NOT NULL UNIQUE, created_at REAL NOT NULL);
+        INSERT INTO locations(name, root, created_at) VALUES ('Old', '/x/old', 0);
+    """)
+    con.commit()
+    con.close()
+    db = Database(str(path))
+    old = db.locations()
+    assert old and old[0]["device_id"] is None and old[0]["mode"] == "scan"
+    did = db.ensure_current_device("PC-A", "windows", "fp-1")
+    assert db.locations()[0]["device_id"] == did  # 紐付けの無い場所はこのPCのものになる
+    assert db.ensure_current_device("PC-A", "windows", "fp-1") == did  # 二度目は同じデバイス
+    other = db.add_device("Old PC", "windows", "")
+    lid = db.add_location("Other", str(env["tmp"] / "other"), "local", other, "scan")
+    db.delete_device(other)
+    assert db.location(lid) is None  # デバイスを消すと、その場所も消える
+
+
+def test_manual_locations_and_files(env):
+    from scanner import parse_manual_lines
+    db = make_db(env)
+    did = db.add_device("Google Drive", "gdrive", "taro@example.com")
+    lid = db.add_location("GDrive docs", "manual://abc", "manual", did, "manual")
+    rows = parse_manual_lines("Documents/report.docx\n\nPhotos/2025/\nPhotos\\trip.JPG\nDocuments/report.docx")
+    assert [r[0] for r in rows] == ["Documents/report.docx", "Photos/trip.JPG"]
+    db.upsert_files(lid, rows, 1.0)
+    hits = db.search({"text": "report"})
+    assert len(hits) == 1 and hits[0]["location_mode"] == "manual"
+    rec = db.get_file(hits[0]["id"])
+    assert rec["device_account"] == "taro@example.com"
+    assert rec["device_dtype"] == "gdrive"
+    # 手動の場所は走査されない・ディスクに無いファイルを欠落扱いにもしない
+    from scanner import index_abs
+    assert index_abs(db, str(env["tmp"] / "nowhere.txt")) is None
+
+
+def _mp3_path(env):
+    import shutil
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available")
+    import subprocess
+    out = env["tmp"] / "song.mp3"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "sine=frequency=330:duration=1", "-c:a", "libmp3lame", str(out)], check=True)
+    return out
+
+
+def test_write_tags_mp3_and_mp4(env):
+    import shutil
+    import subprocess
+    import media_tags as m
+    mp3 = _mp3_path(env)
+    unsupported = m.write_tags(str(mp3), {"title": "Blue", "artist": "Band", "track": "3",
+                                          "series": "Show", "season": "2"})
+    assert unsupported == ["series", "season", "episode"]
+    got = m.read_tags(str(mp3))
+    assert got["title"] == "Blue" and got["artist"] == "Band" and got["track"] == "3"
+    m.write_tags(str(mp3), {"track": "3/12"})  # ID3 のトラック番号は「3/12」形式も書ける
+    assert m.read_tags(str(mp3))["track"] == "3"
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available")
+    mp4 = env["tmp"] / "show.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=64x64:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(mp4)], check=True)
+    assert m.write_tags(str(mp4), {"title": "Pilot", "album": "Season One", "track": "1",
+                                   "year": "2024", "series": "My Show", "season": "1", "episode": "4"}) == []
+    got = m.read_tags(str(mp4))
+    assert got == {"title": "Pilot", "album": "Season One", "track": "1", "year": "2024",
+                   "series": "My Show", "season": "1", "episode": "4"}
+    m.write_tags(str(mp4), {"series": "", "season": "", "episode": ""})
+    assert "series" not in m.read_tags(str(mp4))
+
+
+def test_ui_registration_manual_entry_on_first_run(env):
+    """初回起動は登録画面を開く。手動登録のフォームから、場所とファイル一覧を登録できる。"""
+    import flet as ft
+    import main as app
+    fake = mock.MagicMock()
+    fake.overlay = []
+    fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
+    with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
+        app.main(fake)
+    root = fake.add.call_args_list[-1].args[0]
+    body = root.controls[1]
+    # 登録画面（戻るボタンがあり、タブは無い）
+    assert not hasattr(body.content, "tabs")
+    fields = [c for c in _walk(body) if isinstance(c, ft.TextField)]
+    # 初回は現在のPCなので、既定はツリー。「手動で登録」に切り替える
+    manual_btn = [c for c in _walk(body) if isinstance(c, ft.OutlinedButton) and c.text == app.t("manual_mode")]
+    manual_btn[0].on_click(None)
+    fields = [c for c in _walk(body) if isinstance(c, ft.TextField)]
+    name_tf = [f for f in fields if f.label == app.t("manual_location_name")]
+    files_tf = [f for f in fields if f.label == app.t("manual_files_label")]
+    assert name_tf and files_tf
+    name_tf[0].value = "Google Drive"
+    files_tf[0].value = "Docs/report.docx\nPics/cat.jpg"
+    btn = [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("manual_register")]
+    btn[0].on_click(None)
+    db = make_db(env)
+    hits = db.search({"text": "cat", "include_missing": True})
+    assert hits and hits[0]["location_name"] == "Google Drive"
+    assert hits[0]["location_mode"] == "manual"
+
+
+def test_folder_tree_view_expand_and_check(tmp_path):
+    """ツリー部品を開いて、チェックを入れる・外す操作が選択に反映されること。"""
+    from folder_tree import FolderTreeView
+    from scanner import ScanOptions, list_child_dirs
+    root = tmp_path / "home"
+    (root / "Docs" / "Sub").mkdir(parents=True)
+    (root / "Pics").mkdir()
+    state = {"sel": set()}
+    opts = ScanOptions()
+    tree = FolderTreeView(str(root), lambda p: list_child_dirs(p, opts), state,
+                          lambda: None, empty_text="-", page=None)
+    # ルートは開いた状態。子（Docs, Pics）が見える
+    cbs = dict((os.path.basename(p), cb) for p, cb in tree.rendered)
+    assert "Docs" in cbs and "Pics" in cbs
+    # Docs にチェック → Docs 以下が対象になる
+    cbs["Docs"].on_change(mock.MagicMock(control=mock.MagicMock(value=True)))
+    assert state["sel"] == {str(root / "Docs")}
+    # 展開していない子（Sub）も、上位の選択に含まれて表示上はチェック済み
+    assert tree.rendered and all(cb.value for p, cb in tree.rendered if os.path.basename(p) in ("Docs", "Sub"))
+    assert not [cb for p, cb in tree.rendered if os.path.basename(p) == "Pics" and cb.value]
+    # 外すと、下位も対象外になる
+    cbs["Docs"].on_change(mock.MagicMock(control=mock.MagicMock(value=False)))
+    assert state["sel"] == set()

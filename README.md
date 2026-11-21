@@ -49,7 +49,7 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 
 **Windows**
 1. zip を展開します（ポータブル版は USB メモリなど、書き込みできる場所へ）。
-2. `FileHub.exe` を起動します。
+2. `file_hub.exe` を起動します。
 3. 署名されていないため SmartScreen の警告が出ることがあります。「詳細情報」→「実行」を選んでください。
 
 **Linux**
@@ -81,10 +81,8 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 
 #### 1. 検索（ファイルがどこにあるか探す）
 - **キーワード**：ファイル名・パス・メモを検索します。空白で区切ると「すべての語を含む」で探します（例：`請求 2025`）。
-- **拡張子**：`pdf, xlsx` のように、カンマで複数指定できます。
-- **カテゴリ**・**場所**・**タグ**・**サイズ**（MB）・**更新日**（`2025-01-01` の形式）で絞り込めます。
+- **絞り込み**（「絞り込み」ボタン）：拡張子（`pdf, xlsx` のようにカンマで複数指定）、カテゴリ、場所、タグ、サイズ（MB）、更新日（`2025-01-01` の形式）、並び順、欠落ファイルも含めるか。条件の数は検索の横に表示されます。リセットで全部外せます。
 - **欠落ファイルも含める**：ディスクから消えたファイルも表示します（`[欠落]` と表示されます）。
-- **並び順**：名前順、新しい順、大きい順、場所・パス順。
 - 結果の上に **「N件（うち欠落 M件）」** が出ます。「該当するファイルはありません」なら、そのような条件のファイルは無いと分かります。
 - **CSVに書き出し**：検索結果を表計算ソフトで開ける CSV にします（名前・パス・場所・タグ・メモなど）。
 
@@ -110,7 +108,7 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 - **画像**（jpg・png・gif・bmp・webp・heic）：画面に表示します。
 - **テキスト系**（txt・md・csv・tsv・json・xml・yaml・log・ini・cfg・html・css・js・py など）：
   画面の中で**編集して保存**できます。元の文字コード（UTF-8・Shift_JIS など）のまま保存します。
-  大きすぎるファイル（設定の「プレビューの最大サイズ」を超えるもの）は閲覧のみです。
+  大きすぎるファイル（設定の「プレビューの最大サイズ」、既定は 100MB を超えるもの）は閲覧のみです。
 - **Word（docx）・Excel（xlsx）・PowerPoint（pptx）・ODF・PDF・RTF**：中の文章や表を読み取って表示します（編集はできません。古い形式の doc・xls・ppt は「開く」で既定のアプリを使ってください）。
 - **画像の簡単な加工**：左右・上下の回転、180°回転、左右・上下反転、白黒、縮小（最大辺のピクセル数を指定）。
   既定では「_edited」付きの**新しいファイル**を作ります。「元の画像を上書き」を入れると元を書き換えます。
@@ -121,31 +119,35 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 - **ここに展開**：同じフォルダに、圧縮ファイルと同じ名前のフォルダを作って展開します（Zip Slip のような危険なパスは拒否します）。
 
 #### 6. 音声・動画の情報（タイトル・アルバム・トラック番号・シーズン・話数など）
-- 音声（**mp3・flac・m4a・ogg**）は、ファイルの**タグ（ID3 など）も一緒に書き換え**ます。既存のタグは最初に読み込んで表示します。
-- 動画や、タグを書けない形式は、**索引だけに保存**します（ファイル自体は変わりません）。
-- 項目：タイトル・アーティスト・アルバム・トラック番号・年・シリーズ・シーズン・話数。
+- **MP4・MOV・M4A・M4V**：タイトル・アルバム・トラック・年に加え、**シリーズ・シーズン・話数もファイルのタグ（MP4 のメタデータ）に書き込み**ます。既存のタグは最初に読み込んで表示します。
+- **MP3・FLAC・OGG**：タイトル・アーティスト・アルバム・トラック・年をファイルのタグ（ID3 など）に書き込みます。シリーズ・シーズン・話数はこの形式に無いので、索引だけに保存します（保存後に「索引のみ」と表示されます）。
+- **mkv・avi・webm・wmv**：タグは書けないので、索引だけに保存します（ファイル自体は変わりません）。
+- 再生は既定のアプリで行います。
 
 #### 7. タグ・関連ファイル・メモ
 - **タグ**：詳細画面で追加・削除します。タグ画面では名前の変更・削除、タグで検索ができます。タグは全ファイルで共有されます。
 - **関連ファイル**：「関連付けを追加」で別のファイルを選ぶと、両方の詳細画面からお互いへ移動できます。
 - **メモ**：自由な文章を付けられます。メモも検索の対象です。
 
-#### 8. 場所（ロケーション）
-「場所」は、ファイルがある場所の名前です（例：「PC のデスクトップ」「Google Drive」「仕事用フォルダ」）。
-各ファイルは必ずいずれかの場所に属します。
+#### 8. 登録・デバイス・場所
+「登録」画面で、ファイルを索引に入れます。最初に**デバイス**を選びます。
 
-- **場所を追加**：フォルダを選ぶと、そのフォルダを場所として登録し、すぐスキャンします。
-  同期フォルダ（名前に Google Drive・OneDrive・Dropbox が入るもの）は「クラウド」として分類されます。
+- **デバイス**：このPCは「(このPC) ホスト名 · Windows」のように先頭に `(このPC)` が付きます。Google Drive などは「Google Drive · taro@example.com」のように、登録したアカウントやメールが表示されます。「デバイスを追加」で Windows・Linux・macOS・Google Drive・OneDrive・Dropbox・その他を登録できます。
+- **このPCを選んだ場合**：
+  - **フォルダを選ぶ（ツリー）**：チェックボックス付きのフォルダツリーが開きます。フォルダにチェックを入れると、その中身すべてが対象になります。外すと、中身すべてが対象外になります（上位を選んだまま下位だけ外すと、残りは兄弟フォルダとして選び直されます）。「選んだフォルダを登録してスキャン」で、各フォルダが場所として登録され、すぐスキャンされます。
+  - **手動で登録**：下の手動登録と同じです。
+- **ほかのデバイス（Google Drive など、このPCでないもの）**：フォルダは選べないので、**手動で登録**します。場所の名前を付け、ファイルの一覧を1行に1つずつ相対パス（例：`Documents/report.docx`）で入力します。フォルダ（末尾が `/`）と重複は無視されます。後から「ファイルを追加」で増やせます。
+- 手動で登録したファイルは索引にだけあり、本体はこのPCにありません。開く・移動・削除はできず、タグ・メモ・リンク・関連付けは使えます。
+
+**場所（ロケーション）** は、ファイルがあるデバイス上のフォルダです。場所の画面はデバイスごとにまとめて表示されます。
 - **スキャン**：その場所だけを再スキャンします。新しいファイルを追加し、見つからないファイルは「欠落」にします（削除はしません）。
-- **すべて再スキャン**。
-- **ファイルを表示**：その場所のファイルだけを検索します。
-- **再リンク**：場所のフォルダが見つからない（別のPCに移した、ドライブ文字が変わった、など）ときに、
-  新しいフォルダを指定し直します。ファイルの相対パスが同じなら、タグやメモはそのまま使えます。
-- **名前の変更**・**削除**（索引から外すだけで、ディスク上のファイルは消えません）。
+- **再リンク**：フォルダが見つからない（別のPCに移した、ドライブ文字が変わった、など）ときに、新しいフォルダを指定し直します。タグやメモはそのまま残ります。
+- **ファイルを表示**・**名前の変更**・**削除**（索引から外すだけで、ディスク上のファイルは消えません）。
+- デバイスを**削除**すると、その下の場所（索引の情報）もまとめて消えます。このPCのデバイスは削除できません。
 
 #### 9. 設定
 - **言語**（English / 日本語）：反映にはアプリの再起動が必要です。
-- **プレビューの最大サイズ**（KB）。
+- **プレビューの最大サイズ**（MB、既定 100MB）。
 - **除外するフォルダ名**（カンマ区切り）。
 - **隠しファイル・フォルダを含める**・**AppData を除外**。
 - **削除時にごみ箱へ移動**（Windows・Linux で `send2trash` が使える場合）。
@@ -277,7 +279,7 @@ Both editions have the same features and screens.
 Download the zip that matches your edition and platform from Releases (or the Actions artifacts):
 `FileHub-{single|portable}-{windows-x64|linux-x64|linux-arm64}.zip`
 
-- **Windows**: unzip and run `FileHub.exe`. SmartScreen may warn because the app is not code-signed; choose *More info* → *Run anyway* if you trust the download.
+- **Windows**: unzip and run `file_hub.exe`. SmartScreen may warn because the app is not code-signed; choose *More info* → *Run anyway* if you trust the download.
 - **Linux**: check your CPU with `uname -m` (`x86_64` → x64, `aarch64` → arm64), unzip, and run the app inside.
 - Keep the portable folder in a **writable** place (not `Program Files`).
 
@@ -293,15 +295,16 @@ On first start you choose folders to index. Candidates are the common folders in
 ### Using the app
 Tabs: **Search**, **Locations**, **Tags**, **Settings**. Click a file name to open its details (← to go back).
 
-- **Search**: keyword (all words must match name, path or memo), extensions (`pdf, xlsx`), category, location, tag, size in MB, modified date (`2025-01-01`), include missing files, sort order. The summary shows the count and how many are missing, so you can quickly check whether matching files exist.
+- **Search**: the keyword box (all words must match name, path or memo). Other conditions are in the **Filters** dialog: extensions (`pdf, xlsx`), category, location, tag, size in MB, modified date (`2025-01-01`), include missing files, sort order. The summary shows the count and how many are missing, so you can quickly check whether matching files exist.
 - **Multi-select**: add a tag to all selected files, compress the selection into a zip, or export the results to CSV.
 - **Details**: open, show in folder, copy path, rename (keeps tags, memo and links), move, compress, remove from index (keeps the file), or delete (to the Recycle Bin/Trash when enabled).
-- **Preview and edit**: images are shown; text formats (txt, md, csv, json, html, code, log, etc.) can be edited and saved in their original encoding (UTF-8 or Shift_JIS); Office, PDF, ODF and RTF show extracted text (read-only).
+- **Preview and edit**: images are shown; text formats (txt, md, csv, json, html, code, log, etc.) can be edited and saved in their original encoding (UTF-8 or Shift_JIS); Office, PDF, ODF and RTF show extracted text (read-only). The preview limit is 100 MB by default (Settings).
 - **Simple image edits**: rotate, flip, grayscale, and resize. The result is saved as a new `_edited` file unless you choose to overwrite the original.
 - **Archives**: list contents; extract next to the archive (unsafe paths are refused).
-- **Audio / video info**: title, artist, album, track, year, series, season, episode. For mp3, flac, m4a and ogg the values are also written to the file's tags. Video and other formats are stored in the index only.
+- **Audio / video info**: title, artist, album, track, year, series, season, episode. For MP4/MOV/M4A/M4V all of them are written to the file's tags; for MP3/FLAC/OGG the common ones are written and series/season/episode stay in the index; mkv, avi, webm and wmv are index-only.
 - **Tags, linked files and memos** are available on every file. Tags can be renamed, deleted and searched on the Tags tab.
-- **Locations** are the places files live (for example "PC Desktop" or "Google Drive"). Add, rescan, relink (when a folder moved), rename or remove them. Relink keeps all tags and memos.
+- **Registration** starts with choosing a **device**. On this PC you can pick folders with a checkbox tree (checking a folder includes everything inside it) or enter a file list by hand. For other devices such as Google Drive, enter a file list by hand (one relative path per line). Manually entered files live in the index only.
+- **Locations** belong to devices and are grouped by device. Rescan, relink (when a folder moved), rename, or remove them. Relink keeps all tags and memos. Removing a device removes its locations from the index (not the files).
 
 <a id="supported-file-types"></a>
 ### Supported file types
