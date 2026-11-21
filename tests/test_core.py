@@ -1,4 +1,5 @@
 """ロジック層のテスト（GUI を使わない）。実行: python -m pytest tests -q"""
+import json
 import os
 import sys
 import threading
@@ -441,8 +442,9 @@ def test_ui_interactions_search_detail_tags_memo(env):
     memo = [c for c in _walk(body) if isinstance(c, ft.TextField) and c.multiline and c.value == ""]
     assert memo
     memo[-1].value = "会議メモ"
-    save_btn = [c for c in _walk(body) if isinstance(c, ft.OutlinedButton) and c.text == app.t("save")]
-    save_btn[-1].on_click(None)
+    # 画面の「保存」ボタンはテキスト編集用とメモ用の2つ。どちらを押しても中身は同じ
+    for save_btn in [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("save")]:
+        save_btn.on_click(None)
     assert db.search({"text": "会議"})[0]["name"] == "notes_2025.txt"
 
     # 画像の詳細へ移動し、プレビューと加工ボタンが出ること
@@ -453,7 +455,7 @@ def test_ui_interactions_search_detail_tags_memo(env):
     photo_rows = [c for c in _walk(search_view) if isinstance(c, ft.ListTile)]
     assert len(photo_rows) == 1
     photo_rows[0].on_click(None)
-    labels = [c.text for c in _walk(body) if isinstance(c, ft.OutlinedButton)]
+    labels = [c.text for c in _walk(body) if isinstance(c, ft.ElevatedButton)]
     assert app.t("op_rot_cw") in labels
     assert any(isinstance(c, ft.Image) for c in _walk(body))
 
@@ -496,7 +498,7 @@ def test_ui_image_op_compress_and_settings(env):
     keyword.value = "pic"
     keyword.on_submit(None)
     [c for c in _walk(search_view) if isinstance(c, ft.ListTile)][0].on_click(None)
-    rot = [c for c in _walk(body) if isinstance(c, ft.OutlinedButton) and c.text == app.t("op_rot_cw")][0]
+    rot = [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("op_rot_cw")][0]
     rot.on_click(None)
     edited = docs / "pic_edited.png"
     assert edited.exists()
@@ -512,7 +514,7 @@ def test_ui_image_op_compress_and_settings(env):
             if isinstance(c, ft.Checkbox):
                 c.value = True
                 c.on_change(mock.MagicMock(control=c))
-    compress = [c for c in _walk(search_view) if isinstance(c, ft.OutlinedButton)
+    compress = [c for c in _walk(search_view) if isinstance(c, ft.ElevatedButton)
                 and c.text == app.t("compress_selected")][0]
     compress.on_click(None)
     _time.sleep(0.2)  # バックグラウンド処理の完了を待つ
@@ -690,7 +692,7 @@ def test_ui_registration_manual_entry_on_first_run(env):
     assert not hasattr(body.content, "tabs")
     fields = [c for c in _walk(body) if isinstance(c, ft.TextField)]
     # 初回は現在のPCなので、既定はツリー。「手動で登録」に切り替える
-    manual_btn = [c for c in _walk(body) if isinstance(c, ft.OutlinedButton) and c.text == app.t("manual_mode")]
+    manual_btn = [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("manual_mode")]
     manual_btn[0].on_click(None)
     fields = [c for c in _walk(body) if isinstance(c, ft.TextField)]
     name_tf = [f for f in fields if f.label == app.t("manual_location_name")]
@@ -729,3 +731,60 @@ def test_folder_tree_view_expand_and_check(tmp_path):
     # 外すと、下位も対象外になる
     cbs["Docs"].on_change(mock.MagicMock(control=mock.MagicMock(value=False)))
     assert state["sel"] == set()
+
+
+def test_external_drive_is_allowed_but_random_folders_are_not(env, tmp_path, monkeypatch):
+    import storage_roots
+    drive = tmp_path / "SSD"
+    (drive / "Photos").mkdir(parents=True)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    monkeypatch.setattr(storage_roots, "external_roots", lambda: [str(drive)])
+    assert storage_roots.is_allowed_root(str(env["home"] / "Documents"))   # ホーム
+    assert storage_roots.is_allowed_root(str(drive / "Photos"))            # 外付けの中
+    assert not storage_roots.is_allowed_root(str(outside))                 # どちらでもない
+
+
+def test_tree_shows_every_root(tmp_path):
+    from folder_tree import FolderTreeView
+    from scanner import ScanOptions, list_child_dirs
+    home = tmp_path / "home"
+    ssd = tmp_path / "ssd"
+    (home / "A").mkdir(parents=True)
+    (ssd / "Movies").mkdir(parents=True)
+    state = {"sel": set()}
+    opts = ScanOptions()
+    tree = FolderTreeView([str(home), str(ssd)], lambda p: list_child_dirs(p, opts), state,
+                          lambda: None, empty_text="-", page=None)
+    assert len(tree.container.controls) == 2
+    paths = {p for p, _cb in tree.rendered}
+    assert {str(home), str(ssd), str(home / "A"), str(ssd / "Movies")} <= paths
+
+
+def test_language_notice_is_in_the_new_language():
+    import i18n
+    i18n.set_language("en")
+    assert i18n.t_for("ja", "lang_restart").startswith("アプリを一度完全に閉じて")
+    assert "close the app" in i18n.t("lang_restart")
+    assert i18n.t_for("en", "lang_restart_title") == "Language changed"
+
+
+def test_saving_a_new_language_opens_restart_dialog(env):
+    import flet as ft
+    import main as app
+    mark_initial_scan_done(env)
+    fake = mock.MagicMock()
+    fake.overlay = []
+    fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
+    with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
+        app.main(fake)
+    body = fake.add.call_args_list[-1].args[0].controls[1]
+    settings_view = body.content.tabs[3].content
+    lang = [c for c in _walk(settings_view) if isinstance(c, ft.Dropdown) and c.label == app.t("set_language")][0]
+    lang.value = "ja"
+    save = [c for c in _walk(settings_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("btn_save")][0]
+    save.on_click(None)
+    shown = fake.dialog
+    assert shown.title.value == "言語を変更しました"
+    assert "再起動" in shown.content.value
+    assert json.loads((env["data"] / "config.json").read_text(encoding="utf-8"))["language"] == "ja"

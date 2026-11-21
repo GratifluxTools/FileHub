@@ -63,8 +63,10 @@ def minimal(selected):
 class FolderTreeView:
     """フォルダを遅延読み込みで開閉できるツリー。チェックの状態は state["sel"] に保存する。"""
 
-    def __init__(self, root, list_dirs, state, on_change, empty_text="", page=None):
-        self.root = root
+    def __init__(self, roots, list_dirs, state, on_change, empty_text="", page=None):
+        # roots: 一番上に並べるフォルダの根（1つでも一覧でもよい）
+        roots = [roots] if isinstance(roots, str) else list(roots)
+        self.roots = roots
         self.list_dirs = list_dirs
         self.state = state
         self.on_change = on_change
@@ -72,7 +74,7 @@ class FolderTreeView:
         self.page = page
         self.rendered = []  # (path, Checkbox)
         self.container = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
-        self.container.controls = [self._node(root, 0, expanded=True)]
+        self.container.controls = [self._node(r, 0, expanded=True) for r in roots]
 
     def _node(self, path, depth, expanded=False):
         children = ft.Column(spacing=0, visible=False, tight=True)
@@ -80,7 +82,7 @@ class FolderTreeView:
         cb = ft.Checkbox(value=covered(path, self.state["sel"]),
                          on_change=lambda e, p=path: self._toggle(p, e.control.value))
         arrow.on_click = lambda _, p=path, d=depth, c=children, a=arrow: self._expand(p, d, c, a)
-        label = os.path.basename(os.path.normpath(path)) or path
+        label = os.path.basename(os.path.normpath(path)) or path  # ドライブの根は「D:\\」のまま
         row = ft.Row([ft.Container(width=depth * 22), arrow, cb,
                       ft.Icon(ft.Icons.FOLDER, size=18), ft.Text(label)],
                      spacing=2, tight=True)

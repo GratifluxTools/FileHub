@@ -176,8 +176,8 @@ _PAIRS = {
     "start_scan": ("Start scan", "スキャン開始"),
     "later": ("Later", "あとで"),
     "no_folder_selected": ("Select at least one folder.", "フォルダを1つ以上選んでください。"),
-    "outside_home": ("Only folders inside your home folder can be used.",
-                     "自分のホームフォルダ内のフォルダだけ使えます。"),
+    "outside_home": ("Only folders in your home folder or on a connected external drive can be used.",
+                     "自分のホームフォルダ、または接続された外付けドライブのフォルダだけ使えます。"),
     "overlap": ("This folder overlaps an existing location.", "既存の場所と重なっています。"),
     "add_location": ("Add location", "場所を追加"),
     "location_help": ("A location is a place where files live, such as \"PC Desktop\" or \"Google Drive\" (a sync folder). Every file belongs to one location.",
@@ -208,7 +208,9 @@ _PAIRS = {
     "set_exclude": ("Folders to skip (comma-separated)", "除外するフォルダ名（カンマ区切り）"),
     "use_trash": ("Move deleted files to the Recycle Bin / Trash", "削除時にごみ箱へ移動"),
     "btn_save": ("Save settings", "設定を保存"),
-    "lang_restart": ("The language will change after you restart the app.", "言語はアプリを再起動すると反映されます。"),
+    "lang_restart": ("Please close the app completely and start it again. The new language will be used from the next launch.",
+                     "アプリを一度完全に閉じて、再起動してください。次回起動時から新しい言語で表示されます。"),
+    "lang_restart_title": ("Language changed", "言語を変更しました"),
     "maintenance": ("Maintenance", "メンテナンス"),
     "remove_missing": ("Remove missing entries", "欠落したエントリを削除"),
     "clear_index": ("Clear index", "索引をすべて消去"),
@@ -303,5 +305,10 @@ def set_language(code: str) -> None:
 
 
 def t(key: str, **kwargs) -> str:
-    text = STRINGS.get(_current, {}).get(key) or STRINGS["en"].get(key) or key
+    return t_for(_current, key, **kwargs)
+
+
+def t_for(lang: str, key: str, **kwargs) -> str:
+    """指定した言語の文言を返す（言語設定を切り替えずに、別の言語で表示したいときに使う）。"""
+    text = STRINGS.get(lang, {}).get(key) or STRINGS["en"].get(key) or key
     return text.format(**kwargs) if kwargs else text

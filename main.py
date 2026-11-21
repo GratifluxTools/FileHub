@@ -18,14 +18,15 @@ from config import EDITION, Config, data_dir
 from db import Database
 from device import DEVICE_TYPES, LOCAL_TYPES, current_fingerprint, current_name, current_type
 from folder_tree import FolderTreeView, minimal
-from i18n import set_language, t
+from i18n import set_language, t, t_for
 from image_tools import apply_op, preview_path
 from media_tags import MEDIA_FIELDS, WRITABLE_EXTS, read_tags, write_tags
 from opener import open_path, reveal
-from paths import home_dir, is_inside_home
+from paths import home_dir
 from scanner import (ScanOptions, detect_default_folders, detect_kind, index_abs,
                      list_child_dirs, parse_manual_lines, relocate_record, scan_location)
 from single_instance import acquire as acquire_instance, activate_existing_window
+from storage_roots import is_allowed_root, scan_roots
 from text_io import extract_office_text, read_text, write_text
 from updater import REPO_URL, check_latest
 
@@ -415,14 +416,14 @@ def main(page: ft.Page):
     search_view = ft.Column(expand=True, spacing=6, controls=[
         ft.Row([f_text,
                 ft.ElevatedButton(t("search"), icon=ft.Icons.SEARCH, on_click=run_search),
-                ft.OutlinedButton(t("filters"), icon=ft.Icons.FILTER_LIST, on_click=open_filters),
+                ft.ElevatedButton(t("filters"), icon=ft.Icons.FILTER_LIST, on_click=open_filters),
                 filter_label], wrap=True, spacing=8),
         ft.Row([
-            ft.OutlinedButton(t("export_csv"), icon=ft.Icons.DOWNLOAD, on_click=export_csv),
+            ft.ElevatedButton(t("export_csv"), icon=ft.Icons.DOWNLOAD, on_click=export_csv),
         ], wrap=True),
         summary,
-        ft.Row([sel_text, bulk_tag, ft.OutlinedButton(t("add_tag_selected"), on_click=bulk_add_tag),
-                ft.OutlinedButton(t("compress_selected"), icon=ft.Icons.FOLDER_ZIP,
+        ft.Row([sel_text, bulk_tag, ft.ElevatedButton(t("add_tag_selected"), on_click=bulk_add_tag),
+                ft.ElevatedButton(t("compress_selected"), icon=ft.Icons.FOLDER_ZIP,
                                   on_click=lambda _: compress_ids(list(selected))),
                 ft.TextButton(t("clear_selection"), on_click=bulk_clear_selection)], wrap=True),
         ft.Container(content=results, expand=True),
@@ -511,17 +512,17 @@ def main(page: ft.Page):
 
         actions = ft.Row(wrap=True, spacing=6, controls=[
             ft.ElevatedButton(t("open"), icon=ft.Icons.OPEN_IN_NEW, disabled=not exists, on_click=run_open),
-            ft.OutlinedButton(t("reveal"), icon=ft.Icons.FOLDER_OPEN, disabled=not exists, on_click=run_reveal),
-            ft.OutlinedButton(t("copy_path"), icon=ft.Icons.CONTENT_COPY, on_click=copy_path),
-            ft.OutlinedButton(t("rename"), icon=ft.Icons.EDIT, disabled=not exists,
+            ft.ElevatedButton(t("reveal"), icon=ft.Icons.FOLDER_OPEN, disabled=not exists, on_click=run_reveal),
+            ft.ElevatedButton(t("copy_path"), icon=ft.Icons.CONTENT_COPY, on_click=copy_path),
+            ft.ElevatedButton(t("rename"), icon=ft.Icons.EDIT, disabled=not exists,
                               on_click=lambda _: rename_action(rec)),
-            ft.OutlinedButton(t("move"), icon=ft.Icons.DRIVE_FILE_MOVE, disabled=not exists,
+            ft.ElevatedButton(t("move"), icon=ft.Icons.DRIVE_FILE_MOVE, disabled=not exists,
                               on_click=lambda _: move_action(rec)),
-            ft.OutlinedButton(t("compress"), icon=ft.Icons.FOLDER_ZIP, disabled=not exists,
+            ft.ElevatedButton(t("compress"), icon=ft.Icons.FOLDER_ZIP, disabled=not exists,
                               on_click=lambda _: compress_ids([fid])),
-            ft.OutlinedButton(t("remove_index"), icon=ft.Icons.LINK_OFF,
+            ft.ElevatedButton(t("remove_index"), icon=ft.Icons.LINK_OFF,
                               on_click=lambda _: remove_from_index(rec)),
-            ft.OutlinedButton(t("delete_file"), icon=ft.Icons.DELETE_OUTLINE, disabled=not exists,
+            ft.ElevatedButton(t("delete_file"), icon=ft.Icons.DELETE_OUTLINE, disabled=not exists,
                               style=ft.ButtonStyle(color=RED), on_click=lambda _: delete_action(rec)),
         ])
 
@@ -622,9 +623,9 @@ def main(page: ft.Page):
                 return
             run("resize", max_side=n)
 
-        buttons = [ft.OutlinedButton(t("op_" + op), on_click=lambda _, o=op: run(o))
+        buttons = [ft.ElevatedButton(t("op_" + op), on_click=lambda _, o=op: run(o))
                    for op in ("rot_ccw", "rot_cw", "rot_180", "flip_h", "flip_v", "gray")]
-        buttons.append(ft.OutlinedButton(t("op_resize"), on_click=run_resize))
+        buttons.append(ft.ElevatedButton(t("op_resize"), on_click=run_resize))
         return section(t("image_edit"), ft.Row(buttons, wrap=True), ft.Row([max_px]), overwrite,
                        ft.Text(t("image_edit_note"), size=12, color=GREY))
 
@@ -659,8 +660,8 @@ def main(page: ft.Page):
             run_bg(work, t("extracting"))
 
         return section(t("archive"),
-                       ft.Row([ft.OutlinedButton(t("archive_contents"), icon=ft.Icons.LIST, on_click=show_list),
-                               ft.OutlinedButton(t("extract_here"), icon=ft.Icons.UNARCHIVE, on_click=extract)],
+                       ft.Row([ft.ElevatedButton(t("archive_contents"), icon=ft.Icons.LIST, on_click=show_list),
+                               ft.ElevatedButton(t("extract_here"), icon=ft.Icons.UNARCHIVE, on_click=extract)],
                               wrap=True))
 
     def media_section(rec, exists):
@@ -718,7 +719,7 @@ def main(page: ft.Page):
         tag_in.on_submit = add_now
         return section(t("tags"),
                        ft.Row(chips, wrap=True, spacing=6) if chips else ft.Text(t("no_tags"), color=GREY),
-                       ft.Row([tag_in, ft.OutlinedButton(t("add"), on_click=add_now)]))
+                       ft.Row([tag_in, ft.ElevatedButton(t("add"), on_click=add_now)]))
 
     def links_section(rec):
         fid = rec["id"]
@@ -734,7 +735,7 @@ def main(page: ft.Page):
         ], spacing=0) for l in db.linked_files(fid)]
         return section(t("links"),
                        *(rows or [ft.Text(t("no_links"), color=GREY)]),
-                       ft.OutlinedButton(t("add_link"), icon=ft.Icons.ADD_LINK,
+                       ft.ElevatedButton(t("add_link"), icon=ft.Icons.ADD_LINK,
                                          on_click=lambda _: open_link_picker(fid)))
 
     def open_link_picker(fid):
@@ -769,7 +770,7 @@ def main(page: ft.Page):
             db.set_memo(fid, memo.value or "")
             snack(t("saved"))
 
-        return section(t("memo"), memo, ft.OutlinedButton(t("save"), icon=ft.Icons.SAVE, on_click=save))
+        return section(t("memo"), memo, ft.ElevatedButton(t("save"), icon=ft.Icons.SAVE, on_click=save))
 
     def rename_action(rec):
         def do(new_name):
@@ -907,7 +908,7 @@ def main(page: ft.Page):
         existing = db.find_location_by_root(path)
         if existing:
             return existing["id"]
-        if not is_inside_home(path):
+        if not is_allowed_root(path):
             snack(t("outside_home"))
             return None
         if db.find_overlap(path):
@@ -918,7 +919,7 @@ def main(page: ft.Page):
 
     def relink_location(lid):
         def got(path):
-            if not is_inside_home(path):
+            if not is_allowed_root(path):
                 snack(t("outside_home"))
                 return
             if db.find_overlap(path, exclude_id=lid):
@@ -973,17 +974,17 @@ def main(page: ft.Page):
         exists = manual or os.path.isdir(loc["root"])
         buttons = []
         if manual:
-            buttons.append(ft.OutlinedButton(t("add_files"), icon=ft.Icons.PLAYLIST_ADD,
+            buttons.append(ft.ElevatedButton(t("add_files"), icon=ft.Icons.PLAYLIST_ADD,
                                              on_click=lambda _, i=loc["id"]: add_manual_files_dialog(i)))
         else:
             buttons += [
-                ft.OutlinedButton(t("scan"), icon=ft.Icons.REFRESH, on_click=lambda _, i=loc["id"]: start_scan([i])),
-                ft.OutlinedButton(t("relink"), icon=ft.Icons.LINK, on_click=lambda _, i=loc["id"]: relink_location(i)),
+                ft.ElevatedButton(t("scan"), icon=ft.Icons.REFRESH, on_click=lambda _, i=loc["id"]: start_scan([i])),
+                ft.ElevatedButton(t("relink"), icon=ft.Icons.LINK, on_click=lambda _, i=loc["id"]: relink_location(i)),
             ]
         buttons += [
-            ft.OutlinedButton(t("show_files"), icon=ft.Icons.SEARCH, on_click=lambda _, i=loc["id"]: search_location(i)),
-            ft.OutlinedButton(t("rename"), icon=ft.Icons.EDIT, on_click=lambda _, l=loc: rename_location(l)),
-            ft.OutlinedButton(t("delete"), icon=ft.Icons.DELETE_OUTLINE,
+            ft.ElevatedButton(t("show_files"), icon=ft.Icons.SEARCH, on_click=lambda _, i=loc["id"]: search_location(i)),
+            ft.ElevatedButton(t("rename"), icon=ft.Icons.EDIT, on_click=lambda _, l=loc: rename_location(l)),
+            ft.ElevatedButton(t("delete"), icon=ft.Icons.DELETE_OUTLINE,
                               on_click=lambda _, i=loc["id"]: delete_location(i)),
         ]
         note = t("manual_entry") if manual else loc["root"]
@@ -1083,7 +1084,7 @@ def main(page: ft.Page):
             label=t("device"), width=520, value=str(dev_id) if dev else None, on_change=on_dev,
             options=[ft.dropdown.Option(key=str(d["id"]), text=device_title(
                 d["name"], d["fingerprint"], d["account"], d["dtype"])) for d in devs])
-        controls = [ft.Row([dropdown, ft.OutlinedButton(t("add_device"), icon=ft.Icons.ADD,
+        controls = [ft.Row([dropdown, ft.ElevatedButton(t("add_device"), icon=ft.Icons.ADD,
                                                          on_click=lambda _: new_device_dialog())], wrap=True)]
         if is_here:
             def set_mode(m):
@@ -1091,9 +1092,9 @@ def main(page: ft.Page):
                 build_registration()
 
             controls.append(ft.Row([
-                ft.OutlinedButton(t("tree_mode"), icon=ft.Icons.ACCOUNT_TREE,
+                ft.ElevatedButton(t("tree_mode"), icon=ft.Icons.ACCOUNT_TREE,
                                   on_click=lambda _: set_mode("tree")),
-                ft.OutlinedButton(t("manual_mode"), icon=ft.Icons.EDIT_NOTE,
+                ft.ElevatedButton(t("manual_mode"), icon=ft.Icons.EDIT_NOTE,
                                   on_click=lambda _: set_mode("manual")),
             ], wrap=True))
             if reg_state["mode"] == "tree":
@@ -1114,7 +1115,7 @@ def main(page: ft.Page):
             count_text.value = t("selected_count", n=len(reg_state["sel"]))
             page.update()
 
-        tree = FolderTreeView(home_dir(), lambda p: list_child_dirs(p, opts), reg_state, changed,
+        tree = FolderTreeView(scan_roots(), lambda p: list_child_dirs(p, opts), reg_state, changed,
                               empty_text=t("no_subfolders"), page=page)
 
         def hidden_changed(e):
@@ -1206,8 +1207,8 @@ def main(page: ft.Page):
     locations_view = ft.Column(expand=True, spacing=8, controls=[
         ft.Row([
             ft.ElevatedButton(t("register"), icon=ft.Icons.ADD, on_click=lambda _: open_registration(False)),
-            ft.OutlinedButton(t("add_device"), icon=ft.Icons.DEVICES, on_click=lambda _: new_device_dialog()),
-            ft.OutlinedButton(t("rescan_all"), icon=ft.Icons.SYNC,
+            ft.ElevatedButton(t("add_device"), icon=ft.Icons.DEVICES, on_click=lambda _: new_device_dialog()),
+            ft.ElevatedButton(t("rescan_all"), icon=ft.Icons.SYNC,
                               on_click=lambda _: start_scan([l["id"] for l in db.locations() if l["mode"] == "scan"])),
         ], wrap=True),
         ft.Text(t("location_help"), size=12, color=GREY),
@@ -1269,14 +1270,21 @@ def main(page: ft.Page):
             snack(t("invalid_input"))
             return
         lang_changed = (s_lang.value or "en") != cfg.language
-        cfg.language = s_lang.value or "en"
+        new_lang = s_lang.value or "en"
+        cfg.language = new_lang
         cfg.preview_mb = preview_mb
         cfg.exclude_names = [x.strip() for x in (s_exclude.value or "").split(",") if x.strip()]
         cfg.include_hidden = bool(s_hidden.value)
         cfg.exclude_appdata = bool(s_appdata.value)
         cfg.use_trash = bool(s_trash.value)
         cfg.save(cfg_path)
-        snack(t("lang_restart") if lang_changed else t("saved"))
+        if lang_changed:
+            # 変更後の言語で案内する（今の画面の言語ではなく、次回から切り替わる言語で）
+            open_dialog(t_for(new_lang, "lang_restart_title"),
+                        ft.Text(t_for(new_lang, "lang_restart")),
+                        [ft.ElevatedButton(t_for(new_lang, "ok"), on_click=close_dialog)])
+        else:
+            snack(t("saved"))
 
     def remove_missing(_):
         db.delete_missing()
@@ -1298,8 +1306,8 @@ def main(page: ft.Page):
 
     update_status = ft.Text(t("version_now", v=__version__))
     latest_url = [""]
-    check_btn = ft.OutlinedButton(text=t("check_update"))
-    open_btn = ft.OutlinedButton(text=t("open_download"), visible=False,
+    check_btn = ft.ElevatedButton(text=t("check_update"))
+    open_btn = ft.ElevatedButton(text=t("open_download"), visible=False,
                                  on_click=lambda _: page.launch_url(latest_url[0]))
 
     def check_update(_=None):
@@ -1337,8 +1345,8 @@ def main(page: ft.Page):
         ft.Divider(),
         ft.Text(t("maintenance"), weight=ft.FontWeight.BOLD),
         ft.Row([
-            ft.OutlinedButton(t("remove_missing"), icon=ft.Icons.DELETE_SWEEP, on_click=remove_missing),
-            ft.OutlinedButton(t("clear_index"), icon=ft.Icons.CLEAR_ALL, on_click=clear_index),
+            ft.ElevatedButton(t("remove_missing"), icon=ft.Icons.DELETE_SWEEP, on_click=remove_missing),
+            ft.ElevatedButton(t("clear_index"), icon=ft.Icons.CLEAR_ALL, on_click=clear_index),
         ], wrap=True),
         ft.Divider(),
         ft.Text(t("about"), weight=ft.FontWeight.BOLD),

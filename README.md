@@ -134,7 +134,7 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 
 - **デバイス**：このPCは「(このPC) ホスト名 · Windows」のように先頭に `(このPC)` が付きます。Google Drive などは「Google Drive · taro@example.com」のように、登録したアカウントやメールが表示されます。「デバイスを追加」で Windows・Linux・macOS・Google Drive・OneDrive・Dropbox・その他を登録できます。
 - **このPCを選んだ場合**：
-  - **フォルダを選ぶ（ツリー）**：チェックボックス付きのフォルダツリーが開きます。フォルダにチェックを入れると、その中身すべてが対象になります。外すと、中身すべてが対象外になります（上位を選んだまま下位だけ外すと、残りは兄弟フォルダとして選び直されます）。「選んだフォルダを登録してスキャン」で、各フォルダが場所として登録され、すぐスキャンされます。
+  - **フォルダを選ぶ（ツリー）**：ホームフォルダに加えて、外付けSSD・USBメモリなど、このPCから見えているドライブ（システムのドライブ以外）もツリーの一番上に並びます。チェックボックス付きのフォルダツリーが開きます。フォルダにチェックを入れると、その中身すべてが対象になります。外すと、中身すべてが対象外になります（上位を選んだまま下位だけ外すと、残りは兄弟フォルダとして選び直されます）。「選んだフォルダを登録してスキャン」で、各フォルダが場所として登録され、すぐスキャンされます。
   - **手動で登録**：下の手動登録と同じです。
 - **ほかのデバイス（Google Drive など、このPCでないもの）**：フォルダは選べないので、**手動で登録**します。場所の名前を付け、ファイルの一覧を1行に1つずつ相対パス（例：`Documents/report.docx`）で入力します。フォルダ（末尾が `/`）と重複は無視されます。後から「ファイルを追加」で増やせます。
 - 手動で登録したファイルは索引にだけあり、本体はこのPCにありません。開く・移動・削除はできず、タグ・メモ・リンク・関連付けは使えます。
@@ -303,7 +303,7 @@ Tabs: **Search**, **Locations**, **Tags**, **Settings**. Click a file name to op
 - **Archives**: list contents; extract next to the archive (unsafe paths are refused).
 - **Audio / video info**: title, artist, album, track, year, series, season, episode. For MP4/MOV/M4A/M4V all of them are written to the file's tags; for MP3/FLAC/OGG the common ones are written and series/season/episode stay in the index; mkv, avi, webm and wmv are index-only.
 - **Tags, linked files and memos** are available on every file. Tags can be renamed, deleted and searched on the Tags tab.
-- **Registration** starts with choosing a **device**. On this PC you can pick folders with a checkbox tree (checking a folder includes everything inside it) or enter a file list by hand. For other devices such as Google Drive, enter a file list by hand (one relative path per line). Manually entered files live in the index only.
+- **Registration** starts with choosing a **device**. On this PC you can pick folders (your home folder and any connected external drive, such as an SSD or USB stick, except the system drive) with a checkbox tree (checking a folder includes everything inside it) or enter a file list by hand. For other devices such as Google Drive, enter a file list by hand (one relative path per line). Manually entered files live in the index only.
 - **Locations** belong to devices and are grouped by device. Rescan, relink (when a folder moved), rename, or remove them. Relink keeps all tags and memos. Removing a device removes its locations from the index (not the files).
 
 <a id="supported-file-types"></a>
