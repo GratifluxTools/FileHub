@@ -690,21 +690,25 @@ def test_ui_registration_manual_entry_on_first_run(env):
     body = root.controls[1]
     # 登録画面（戻るボタンがあり、タブは無い）
     assert not hasattr(body.content, "tabs")
-    fields = [c for c in _walk(body) if isinstance(c, ft.TextField)]
     # 初回は現在のPCなので、既定はツリー。「手動で登録」に切り替える
     manual_btn = [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("manual_mode")]
     manual_btn[0].on_click(None)
-    fields = [c for c in _walk(body) if isinstance(c, ft.TextField)]
-    name_tf = [f for f in fields if f.label == app.t("manual_location_name")]
-    files_tf = [f for f in fields if f.label == app.t("manual_files_label")]
-    assert name_tf and files_tf
-    name_tf[0].value = "Google Drive"
+    # 場所の名前は、登録済みデバイスのプルダウン（選んだデバイス名が場所の名前になる）
+    dd = [c for c in _walk(body) if isinstance(c, ft.Dropdown) and c.label == app.t("manual_location_name")]
+    files_tf = [c for c in _walk(body) if isinstance(c, ft.TextField) and c.label == app.t("manual_files_label")]
+    assert dd and files_tf
+    db = make_db(env)
+    gdrive = db.add_device("Google Drive", "gdrive", "taro@example.com")
+    dd[0].value = str(gdrive)
+    dd[0].on_change(mock.MagicMock(control=dd[0]))  # 選ぶと登録画面が作り直される
+    dd = [c for c in _walk(body) if isinstance(c, ft.Dropdown) and c.label == app.t("manual_location_name")]
+    files_tf = [c for c in _walk(body) if isinstance(c, ft.TextField) and c.label == app.t("manual_files_label")]
     files_tf[0].value = "Docs/report.docx\nPics/cat.jpg"
     btn = [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("manual_register")]
     btn[0].on_click(None)
-    db = make_db(env)
     hits = db.search({"text": "cat", "include_missing": True})
     assert hits and hits[0]["location_name"] == "Google Drive"
+    assert db.get_file(hits[0]["id"])["device_name"] == "Google Drive"
     assert hits[0]["location_mode"] == "manual"
 
 
@@ -788,3 +792,95 @@ def test_saving_a_new_language_opens_restart_dialog(env):
     assert shown.title.value == "言語を変更しました"
     assert "再起動" in shown.content.value
     assert json.loads((env["data"] / "config.json").read_text(encoding="utf-8"))["language"] == "ja"
+
+
+def _open_app(env):
+    import flet as ft
+    import main as app
+    mark_initial_scan_done(env)
+    fake = mock.MagicMock()
+    fake.overlay = []
+    fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
+    with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
+        app.main(fake)
+    body = fake.add.call_args_list[-1].args[0].controls[1]
+    return app, fake, body
+
+
+def _serializes(control):
+    """Flet が画面を送るときと同じ変換が通ること（例外が出ないこと）を確かめる。"""
+    cmds = control._build_add_commands(index={"page": None})
+    assert cmds
+
+
+def test_filter_page_opens_and_reset_button_exists(env):
+    import flet as ft
+    app, fake, body = _open_app(env)
+    tabs = body.content
+    search_view = tabs.tabs[0].content
+    # 検索画面に「絞り込みをリセット」がある
+    assert [c for c in _walk(search_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("reset_filters")]
+    # 絞り込みを押すと、画面（ダイアログではなく）に条件が並ぶ
+    [c for c in _walk(search_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("filters")][0].on_click(None)
+    assert body.content is not tabs  # 画面が切り替わる（ダイアログは使わない）
+    assert [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("filter_apply")]
+    _serializes(body)
+
+
+def test_link_picker_page_links_a_file(env):
+    import flet as ft
+    from scanner import scan_location
+    app, fake, body = _open_app(env)
+    docs = env["home"] / "Documents"
+    docs.mkdir(exist_ok=True)
+    (docs / "a.txt").write_text("a", encoding="utf-8")
+    (docs / "b.txt").write_text("b", encoding="utf-8")
+    db = make_db(env)
+    lid = db.add_location("Documents", str(docs), "local")
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    a = db.search({"text": "a.txt"})[0]["id"]
+    # 検索画面から、ファイルの詳細を開く
+    kw = [c for c in _walk(body) if isinstance(c, ft.TextField) and c.label == app.t("keyword")][0]
+    kw.value = "a.txt"
+    kw.on_submit(None)
+    [c for c in _walk(body) if isinstance(c, ft.ListTile)][0].on_click(None)
+    [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("add_link")][0].on_click(None)
+    _serializes(body)
+    q = [c for c in _walk(body) if isinstance(c, ft.TextField) and c.label == app.t("keyword")][0]
+    q.value = "b.txt"
+    q.on_submit(None)
+    picks = [c for c in _walk(body) if isinstance(c, ft.ListTile)]
+    assert len(picks) == 1
+    picks[0].on_click(None)
+    assert [x["name"] for x in db.linked_files(a)] == ["b.txt"]
+
+
+def test_device_form_page_adds_device(env):
+    import flet as ft
+    app, fake, body = _open_app(env)
+    locations_view = body.content.tabs[1].content
+    [c for c in _walk(locations_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("add_device")][0].on_click(None)
+    _serializes(body)
+    name = [c for c in _walk(body) if isinstance(c, ft.TextField) and c.label == app.t("device_name")][0]
+    name.value = "Desk NAS"
+    save = [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("save")][0]
+    save.on_click(None)
+    db = make_db(env)
+    assert [d["name"] for d in db.devices() if d["name"] == "Desk NAS"] == ["Desk NAS"]
+
+
+def test_external_drive_gets_its_own_device(env, tmp_path, monkeypatch):
+    import storage_roots
+    from device import EXTERNAL_TYPE
+    drive = tmp_path / "SSD"
+    (drive / "Movies").mkdir(parents=True)
+    monkeypatch.setattr(storage_roots, "external_roots", lambda: [str(drive)])
+    db = make_db(env)
+    here = db.ensure_current_device("PC-A", "windows", "fp-here")
+    # ホームの中はこのPC、外付けは別デバイス
+    assert storage_roots.device_for_path(db, str(env["home"] / "Documents"), here) == here
+    ext = storage_roots.device_for_path(db, str(drive / "Movies"), here)
+    assert ext != here
+    assert db.device(ext)["dtype"] == EXTERNAL_TYPE and db.device(ext)["name"] == "SSD"
+    # 二度目は同じデバイスを使う
+    assert storage_roots.device_for_path(db, str(drive / "Movies"), here) == ext

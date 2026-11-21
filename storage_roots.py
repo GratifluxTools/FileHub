@@ -56,3 +56,14 @@ def scan_roots():
     """登録画面のツリーの一番上に出す根（ホーム → 外付けの順）。"""
     from paths import home_dir
     return [home_dir()] + external_roots()
+
+
+def device_for_path(db, path, here_id, device_type="external"):
+    """フォルダが属するデバイスを決める。ホームの中はこのPC、外付けドライブは別の「外付けドライブ」デバイス。"""
+    if is_inside_home(path):
+        return here_id
+    root = next((r for r in external_roots() if is_within(path, r)), None) or path
+    label = os.path.basename(os.path.normpath(root)) or root
+    label = label.rstrip("\\/") or root
+    dev = db.find_device(label, device_type)
+    return dev["id"] if dev else db.add_device(label, device_type, "")

@@ -11,6 +11,8 @@ import socket
 LOCAL_TYPES = ["windows", "linux", "mac"]
 CLOUD_TYPES = ["gdrive", "onedrive", "dropbox"]
 DEVICE_TYPES = LOCAL_TYPES + CLOUD_TYPES + ["other"]
+# 外付けSSD・USBなどは、登録時に自動で作る（手動では選ばせない）
+EXTERNAL_TYPE = "external"
 
 
 def _user() -> str:

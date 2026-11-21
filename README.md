@@ -136,7 +136,7 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 - **このPCを選んだ場合**：
   - **フォルダを選ぶ（ツリー）**：ホームフォルダに加えて、外付けSSD・USBメモリなど、このPCから見えているドライブ（システムのドライブ以外）もツリーの一番上に並びます。チェックボックス付きのフォルダツリーが開きます。フォルダにチェックを入れると、その中身すべてが対象になります。外すと、中身すべてが対象外になります（上位を選んだまま下位だけ外すと、残りは兄弟フォルダとして選び直されます）。「選んだフォルダを登録してスキャン」で、各フォルダが場所として登録され、すぐスキャンされます。
   - **手動で登録**：下の手動登録と同じです。
-- **ほかのデバイス（Google Drive など、このPCでないもの）**：フォルダは選べないので、**手動で登録**します。場所の名前を付け、ファイルの一覧を1行に1つずつ相対パス（例：`Documents/report.docx`）で入力します。フォルダ（末尾が `/`）と重複は無視されます。後から「ファイルを追加」で増やせます。
+- **ほかのデバイス（Google Drive など、このPCでないもの）**：フォルダは選べないので、**手動で登録**します。「場所」で登録済みのデバイスをプルダウンから選ぶと、そのデバイス名が場所の名前になります（同じ名前があれば番号が付きます）。ファイルの一覧を1行に1つずつ相対パス（例：`Documents/report.docx`）で入力します。フォルダ（末尾が `/`）と重複は無視されます。後から「ファイルを追加」で増やせます。
 - 手動で登録したファイルは索引にだけあり、本体はこのPCにありません。開く・移動・削除はできず、タグ・メモ・リンク・関連付けは使えます。
 
 **場所（ロケーション）** は、ファイルがあるデバイス上のフォルダです。場所の画面はデバイスごとにまとめて表示されます。
@@ -295,7 +295,7 @@ On first start you choose folders to index. Candidates are the common folders in
 ### Using the app
 Tabs: **Search**, **Locations**, **Tags**, **Settings**. Click a file name to open its details (← to go back).
 
-- **Search**: the keyword box (all words must match name, path or memo). Other conditions are in the **Filters** dialog: extensions (`pdf, xlsx`), category, location, tag, size in MB, modified date (`2025-01-01`), include missing files, sort order. The summary shows the count and how many are missing, so you can quickly check whether matching files exist.
+- **Search**: the keyword box (all words must match name, path or memo). Other conditions are on the **Filters** page (press Reset filters to clear them): extensions (`pdf, xlsx`), category, location, tag, size in MB, modified date (`2025-01-01`), include missing files, sort order. The summary shows the count and how many are missing, so you can quickly check whether matching files exist.
 - **Multi-select**: add a tag to all selected files, compress the selection into a zip, or export the results to CSV.
 - **Details**: open, show in folder, copy path, rename (keeps tags, memo and links), move, compress, remove from index (keeps the file), or delete (to the Recycle Bin/Trash when enabled).
 - **Preview and edit**: images are shown; text formats (txt, md, csv, json, html, code, log, etc.) can be edited and saved in their original encoding (UTF-8 or Shift_JIS); Office, PDF, ODF and RTF show extracted text (read-only). The preview limit is 100 MB by default (Settings).

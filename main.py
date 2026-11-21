@@ -16,7 +16,7 @@ from categories import (ARCHIVE_READ, CATEGORY_ORDER, IMAGE_EDITABLE, IMAGE_PREV
                         MEDIA_CATEGORIES, OFFICE_TEXT, TEXT_EDITABLE)
 from config import EDITION, Config, data_dir
 from db import Database
-from device import DEVICE_TYPES, LOCAL_TYPES, current_fingerprint, current_name, current_type
+from device import DEVICE_TYPES, EXTERNAL_TYPE, LOCAL_TYPES, current_fingerprint, current_name, current_type
 from folder_tree import FolderTreeView, minimal
 from i18n import set_language, t, t_for
 from image_tools import apply_op, preview_path
@@ -26,7 +26,7 @@ from paths import home_dir
 from scanner import (ScanOptions, detect_default_folders, detect_kind, index_abs,
                      list_child_dirs, parse_manual_lines, relocate_record, scan_location)
 from single_instance import acquire as acquire_instance, activate_existing_window
-from storage_roots import is_allowed_root, scan_roots
+from storage_roots import device_for_path, is_allowed_root, scan_roots
 from text_io import extract_office_text, read_text, write_text
 from updater import REPO_URL, check_latest
 
@@ -217,9 +217,10 @@ def main(page: ft.Page):
         body.content = tabs
         page.update()
 
-    def show_screen(title, controls):
+    def show_screen(title, controls, back=None):
+        back_fn = (lambda _=None: back()) if back else show_tabs
         body.content = ft.Column(expand=True, controls=[
-            ft.Row([ft.IconButton(icon=ft.Icons.ARROW_BACK, tooltip=t("back"), on_click=show_tabs),
+            ft.Row([ft.IconButton(icon=ft.Icons.ARROW_BACK, tooltip=t("back"), on_click=back_fn),
                     ft.Text(title, size=18, weight=ft.FontWeight.BOLD)]),
             ft.Column(controls, scroll=ft.ScrollMode.AUTO, expand=True, spacing=6),
         ])
@@ -271,28 +272,34 @@ def main(page: ft.Page):
             return None
         return flt
 
+    def reset_filters(_=None):
+        filt.update(cat="", ext="", loc="", tag="", min="", max="", **{"from": "", "to": ""},
+                    sort="name", missing=False)
+        update_filter_label()
+        run_search()
+
     def open_filters(_=None):
         locs = db.locations()
         tags = db.all_tags()
         loc_keys = {str(l["id"]) for l in locs}
         tag_keys = {str(tg["id"]) for tg in tags}
-        f_cat = ft.Dropdown(label=t("category"), width=220, value=filt["cat"], options=(
+        f_cat = ft.Dropdown(label=t("category"), width=260, value=filt["cat"], options=(
             [ft.dropdown.Option(key="", text=t("all"))]
             + [ft.dropdown.Option(key=c, text=t("cat_" + c)) for c in CATEGORY_ORDER]))
-        f_ext = ft.TextField(label=t("extensions"), hint_text="jpg, pdf", width=220, value=filt["ext"])
-        f_loc = ft.Dropdown(label=t("location"), width=220,
+        f_ext = ft.TextField(label=t("extensions"), hint_text="jpg, pdf", width=260, value=filt["ext"])
+        f_loc = ft.Dropdown(label=t("location"), width=260,
                             value=filt["loc"] if filt["loc"] in loc_keys else "",
                             options=[ft.dropdown.Option(key="", text=t("all"))] + [
                                 ft.dropdown.Option(key=str(l["id"]), text=l["name"]) for l in locs])
-        f_tag = ft.Dropdown(label=t("tag"), width=220,
+        f_tag = ft.Dropdown(label=t("tag"), width=260,
                             value=filt["tag"] if filt["tag"] in tag_keys else "",
                             options=[ft.dropdown.Option(key="", text=t("all"))] + [
                                 ft.dropdown.Option(key=str(tg["id"]), text=tg["name"]) for tg in tags])
-        f_min = ft.TextField(label=t("min_mb"), width=220, value=filt["min"])
-        f_max = ft.TextField(label=t("max_mb"), width=220, value=filt["max"])
-        f_from = ft.TextField(label=t("modified_from"), hint_text="2025-01-01", width=220, value=filt["from"])
-        f_to = ft.TextField(label=t("modified_to"), hint_text="2025-12-31", width=220, value=filt["to"])
-        f_sort = ft.Dropdown(label=t("sort"), width=220, value=filt["sort"], options=[
+        f_min = ft.TextField(label=t("min_mb"), width=260, value=filt["min"])
+        f_max = ft.TextField(label=t("max_mb"), width=260, value=filt["max"])
+        f_from = ft.TextField(label=t("modified_from"), hint_text="2025-01-01", width=260, value=filt["from"])
+        f_to = ft.TextField(label=t("modified_to"), hint_text="2025-12-31", width=260, value=filt["to"])
+        f_sort = ft.Dropdown(label=t("sort"), width=260, value=filt["sort"], options=[
             ft.dropdown.Option(key="name", text=t("sort_name")),
             ft.dropdown.Option(key="mtime", text=t("sort_mtime")),
             ft.dropdown.Option(key="size", text=t("sort_size")),
@@ -305,26 +312,19 @@ def main(page: ft.Page):
                         tag=f_tag.value or "", min=f_min.value or "", max=f_max.value or "",
                         **{"from": f_from.value or "", "to": f_to.value or ""},
                         sort=f_sort.value or "name", missing=bool(f_missing.value))
-            close_dialog()
             update_filter_label()
+            show_tabs()
             run_search()
 
-        def reset(_=None):
-            filt.update(cat="", ext="", loc="", tag="", min="", max="", **{"from": "", "to": ""},
-                        sort="name", missing=False)
-            close_dialog()
-            update_filter_label()
-            run_search()
-
-        content = ft.Column([
+        show_screen(t("filters"), [
             ft.Row([f_cat, f_ext], wrap=True), ft.Row([f_loc, f_tag], wrap=True),
             ft.Row([f_min, f_max], wrap=True), ft.Row([f_from, f_to], wrap=True),
             ft.Row([f_sort, f_missing], wrap=True),
-        ], tight=True, scroll=ft.ScrollMode.AUTO, width=520, height=420)
-        open_dialog(t("filters"), content, [
-            ft.TextButton(t("filter_reset"), on_click=reset),
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("filter_apply"), on_click=apply),
+            ft.Row([
+                ft.ElevatedButton(t("filter_apply"), icon=ft.Icons.CHECK, on_click=apply),
+                ft.ElevatedButton(t("filter_reset"), icon=ft.Icons.RESTART_ALT,
+                                  on_click=lambda _: (reset_filters(), show_tabs())),
+            ], wrap=True),
         ])
 
     def update_selection_text():
@@ -417,6 +417,7 @@ def main(page: ft.Page):
         ft.Row([f_text,
                 ft.ElevatedButton(t("search"), icon=ft.Icons.SEARCH, on_click=run_search),
                 ft.ElevatedButton(t("filters"), icon=ft.Icons.FILTER_LIST, on_click=open_filters),
+                ft.ElevatedButton(t("reset_filters"), icon=ft.Icons.RESTART_ALT, on_click=reset_filters),
                 filter_label], wrap=True, spacing=8),
         ft.Row([
             ft.ElevatedButton(t("export_csv"), icon=ft.Icons.DOWNLOAD, on_click=export_csv),
@@ -739,28 +740,29 @@ def main(page: ft.Page):
                                          on_click=lambda _: open_link_picker(fid)))
 
     def open_link_picker(fid):
-        q = ft.TextField(label=t("keyword"), autofocus=True, expand=True)
-        out = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=300)
+        q = ft.TextField(label=t("keyword"), autofocus=True, width=420)
+        out = ft.Column(spacing=2)
 
         def pick(other):
             db.link(fid, other)
-            close_dialog()
             show_detail(fid)
 
         def search(_=None):
             txt = (q.value or "").strip()
             rows = db.search({"text": txt, "include_missing": False, "sort": "name"}, limit=30) if txt else []
             out.controls = [
-                ft.TextButton(f"{r['name']}  —  {r['location_name']} / {r['relpath']}",
-                              on_click=lambda _, i=r["id"]: pick(i))
+                ft.ListTile(title=ft.Text(r["name"], max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                            subtitle=ft.Text(f"{r['location_name']} / {r['relpath']}", size=12, color=GREY),
+                            on_click=lambda _, i=r["id"]: pick(i))
                 for r in rows if r["id"] != fid
             ] or [ft.Text(t("no_results"))]
             page.update()
 
         q.on_submit = search
-        open_dialog(t("add_link"),
-                    ft.Container(width=560, content=ft.Column([q, out], tight=True)),
-                    [ft.TextButton(t("close"), on_click=close_dialog)])
+        show_screen(t("add_link"), [
+            ft.Row([q, ft.ElevatedButton(t("search"), icon=ft.Icons.SEARCH, on_click=search)], wrap=True),
+            out,
+        ], back=lambda: show_detail(fid))
 
     def memo_section(rec):
         fid = rec["id"]
@@ -903,6 +905,9 @@ def main(page: ft.Page):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def device_for_path_here(path):
+        return device_for_path(db, path, reg_state["device"], EXTERNAL_TYPE)
+
     def ensure_location(path, device_id, kind=None):
         """フォルダを走査対象の場所として登録する。既存の場所と重なる場合は登録せず None を返す。"""
         existing = db.find_location_by_root(path)
@@ -999,30 +1004,33 @@ def main(page: ft.Page):
         ]))
 
     # ---------- デバイス ----------
-    def device_form(title, name, account, dtype, type_editable, on_ok):
+    def device_form(title, name, account, dtype, type_editable, on_ok, back=None):
         name_tf = ft.TextField(label=t("device_name"), value=name, width=420)
         acc_tf = ft.TextField(label=t("account"), value=account, width=420)
+        type_options = list(DEVICE_TYPES) + ([EXTERNAL_TYPE] if dtype == EXTERNAL_TYPE else [])
         type_dd = ft.Dropdown(label=t("device_type"), value=dtype, width=420, disabled=not type_editable,
-                              options=[ft.dropdown.Option(key=x, text=t("type_" + x)) for x in DEVICE_TYPES])
+                              options=[ft.dropdown.Option(key=x, text=t("type_" + x)) for x in type_options])
+        go_back = back or show_tabs
 
         def ok(_):
             if not (name_tf.value or "").strip():
                 snack(t("invalid_input"))
                 return
-            close_dialog()
             on_ok((name_tf.value or "").strip(), (acc_tf.value or "").strip(), type_dd.value or "other")
+            go_back()
 
-        open_dialog(title, ft.Column([type_dd, name_tf, acc_tf], tight=True, width=440), [
-            ft.TextButton(t("cancel"), on_click=close_dialog),
-            ft.ElevatedButton(t("save"), on_click=ok),
-        ])
+        show_screen(title, [
+            type_dd, name_tf, acc_tf,
+            ft.Row([ft.ElevatedButton(t("save"), icon=ft.Icons.SAVE, on_click=ok),
+                    ft.ElevatedButton(t("cancel"), on_click=lambda _: go_back())], wrap=True),
+        ], back=go_back)
 
-    def new_device_dialog():
+    def new_device_dialog(back=None):
         def on_ok(name, account, dtype):
             db.add_device(name, dtype, account)
             refresh_all()
 
-        device_form(t("add_device"), "", "", "windows", True, on_ok)
+        device_form(t("add_device"), "", "", "windows", True, on_ok, back=back)
 
     def edit_device(d):
         def on_ok(name, account, _dtype):
@@ -1067,6 +1075,10 @@ def main(page: ft.Page):
     def norm_key(path):
         return os.path.normcase(os.path.abspath(path))
 
+    def show_registration():
+        show_screen(t("register"), [reg_host], back=show_tabs)
+        build_registration()
+
     def build_registration():
         devs = db.devices()
         devs = sorted(devs, key=lambda d: d["fingerprint"] != CUR_FP)
@@ -1085,7 +1097,7 @@ def main(page: ft.Page):
             options=[ft.dropdown.Option(key=str(d["id"]), text=device_title(
                 d["name"], d["fingerprint"], d["account"], d["dtype"])) for d in devs])
         controls = [ft.Row([dropdown, ft.ElevatedButton(t("add_device"), icon=ft.Icons.ADD,
-                                                         on_click=lambda _: new_device_dialog())], wrap=True)]
+                                                         on_click=lambda _: new_device_dialog(back=show_registration))], wrap=True)]
         if is_here:
             def set_mode(m):
                 reg_state["mode"] = m
@@ -1135,7 +1147,7 @@ def main(page: ft.Page):
                 return
             ids = []
             for p in paths:
-                lid = ensure_location(p, reg_state["device"])
+                lid = ensure_location(p, device_for_path_here(p))
                 if lid is not None:
                     ids.append(lid)
             reg_state["sel"] = set()
@@ -1154,20 +1166,35 @@ def main(page: ft.Page):
         ], spacing=8)
 
     def manual_panel(dev_id, optional):
-        name_tf = ft.TextField(label=t("manual_location_name"), width=420)
+        devs = db.devices()
+        dev_dd = ft.Dropdown(
+            label=t("manual_location_name"), width=520, value=str(dev_id) if dev_id else None,
+            options=[ft.dropdown.Option(key=str(d["id"]), text=device_title(
+                d["name"], d["fingerprint"], d["account"], d["dtype"])) for d in devs])
         files_tf = ft.TextField(label=t("manual_files_label"), hint_text=t("manual_files_hint"),
                                 multiline=True, min_lines=6, max_lines=14, width=520)
 
+        def on_pick(e):
+            reg_state["device"] = int(e.control.value)
+            build_registration()
+
+        dev_dd.on_change = on_pick
+
         def register(_):
-            name = (name_tf.value or "").strip()
-            if not name:
+            target = db.device(reg_state["device"]) if reg_state["device"] else None
+            if target is None:
                 snack(t("invalid_input"))
                 return
+            # 同じデバイスに同じ名前の場所があれば番号を付ける
+            base, name, n = target["name"], target["name"], 2
+            existing = {l["name"] for l in db.locations() if l["device_id"] == target["id"]}
+            while name in existing:
+                name = f"{base} ({n})"
+                n += 1
             rows = parse_manual_lines(files_tf.value)
-            loc = db.add_location(name, f"manual://{uuid.uuid4().hex}", "manual", dev_id, "manual")
+            loc = db.add_location(name, f"manual://{uuid.uuid4().hex}", "manual", target["id"], "manual")
             if rows:
                 db.upsert_files(loc, rows, time.time())
-            name_tf.value = ""
             files_tf.value = ""
             snack(t("manual_added", n=len(rows)))
             show_tabs()
@@ -1175,7 +1202,7 @@ def main(page: ft.Page):
 
         return ft.Column([
             ft.Text(t("manual_note_optional") if optional else t("manual_note"), size=12, color=GREY),
-            name_tf, files_tf,
+            dev_dd, files_tf,
             ft.ElevatedButton(t("manual_register"), icon=ft.Icons.SAVE, on_click=register),
         ], spacing=8)
 
@@ -1190,7 +1217,8 @@ def main(page: ft.Page):
         for d in sorted(devs, key=lambda x: x["fingerprint"] != CUR_FP):
             mine = [l for l in locs if l["device_id"] == d["id"]]
             header = ft.Row([
-                ft.Icon(ft.Icons.COMPUTER if d["dtype"] in LOCAL_TYPES else ft.Icons.CLOUD),
+                ft.Icon(ft.Icons.COMPUTER if d["dtype"] in LOCAL_TYPES
+                        else ft.Icons.STORAGE if d["dtype"] == EXTERNAL_TYPE else ft.Icons.CLOUD),
                 ft.Text(device_title(d["name"], d["fingerprint"], d["account"], d["dtype"]),
                         weight=ft.FontWeight.BOLD, expand=True),
                 ft.IconButton(icon=ft.Icons.EDIT, tooltip=t("edit_device"),

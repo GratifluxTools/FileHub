@@ -135,6 +135,9 @@ class Database:
             "INSERT INTO devices(name, dtype, account, fingerprint, created_at) VALUES (?,?,?,?,?)",
             (name, dtype, account, fingerprint, time.time()))
 
+    def find_device(self, name, dtype):
+        return self._one("SELECT * FROM devices WHERE name = ? AND dtype = ?", (name, dtype))
+
     def update_device(self, did, name, account):
         self._run("UPDATE devices SET name = ?, account = ? WHERE id = ?", (name, account, did))
 
