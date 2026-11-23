@@ -322,6 +322,15 @@ class Database:
     def attach_tag(self, fid, tid):
         self._run("INSERT OR IGNORE INTO file_tags(file_id, tag_id) VALUES (?,?)", (fid, tid))
 
+    def all_file_rows(self):
+        """整理（FileHub 自身のものの除外）に使う。手入力の場所も含む。"""
+        return self._rows("""
+            SELECT f.id, f.relpath, f.name, f.ext, l.mode AS mode, l.root AS root
+            FROM files f JOIN locations l ON l.id = f.location_id ORDER BY f.id""")
+
+    def delete_files(self, ids):
+        self._many("DELETE FROM files WHERE id = ?", [(i,) for i in ids])
+
     # ---- 検索 ----
     def _where(self, flt):
         clauses, args = [], []

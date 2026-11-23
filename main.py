@@ -17,6 +17,7 @@ from categories import (ARCHIVE_READ, CATEGORY_ORDER, IMAGE_EDITABLE, IMAGE_PREV
                         MEDIA_CATEGORIES, OFFICE_TEXT, TEXT_EDITABLE)
 from config import EDITION, Config, data_dir
 from db import Database
+from app_files import find_app_records, is_app_dir, is_build_name
 from device import DEVICE_TYPES, EXTERNAL_TYPE, LOCAL_TYPES, current_fingerprint, current_name, current_type
 from folder_tree import FolderTreeView, minimal
 from i18n import set_language, t, t_for
@@ -909,6 +910,7 @@ def main(page: ft.Page):
                 scan_bar.visible = False
                 snack(t("scan_cancelled") if cancelled else t("scan_done", n=total))
                 refresh_all()
+                run_bg(purge_work)
 
             page.run_thread(done)
 
@@ -919,6 +921,9 @@ def main(page: ft.Page):
 
     def ensure_location(path, device_id, kind=None):
         """フォルダを走査対象の場所として登録する。既存の場所と重なる場合は登録せず None を返す。"""
+        if is_app_dir(path) or is_build_name(os.path.basename(os.path.normpath(path))):
+            snack(t("app_folder_refused"), error=True)
+            return None
         existing = db.find_location_by_root(path)
         if existing:
             return existing["id"]
@@ -933,6 +938,9 @@ def main(page: ft.Page):
 
     def relink_location(lid):
         def got(path):
+            if is_app_dir(path) or is_build_name(os.path.basename(os.path.normpath(path))):
+                snack(t("app_folder_refused"), error=True)
+                return
             if not is_allowed_root(path):
                 snack(t("outside_home"))
                 return
@@ -1058,6 +1066,12 @@ def main(page: ft.Page):
             snack(t("device_deleted"))
 
         confirm_page(t("confirm"), t("delete_device_confirm", name=d["name"]), t("delete"), do)
+
+    # ---------- FileHub 自身のファイルの整理 ----------
+    def purge_work():
+        ids = find_app_records(db.all_file_rows())
+        db.delete_files(ids)
+        return t("purged", n=len(ids))
 
     # ---------- 登録画面 ----------
     reg_state = {"device": None, "sel": set(), "mode": "tree"}
@@ -1426,6 +1440,8 @@ def main(page: ft.Page):
         ft.Row([
             ft.ElevatedButton(t("remove_missing"), icon=ft.Icons.DELETE_SWEEP, on_click=remove_missing),
             ft.ElevatedButton(t("clear_index"), icon=ft.Icons.CLEAR_ALL, on_click=clear_index),
+            ft.ElevatedButton(t("purge_app_files"), icon=ft.Icons.CLEANING_SERVICES,
+                              on_click=lambda _: run_bg(purge_work, t("purging"))),
             ft.ElevatedButton(t("export_data"), icon=ft.Icons.UPLOAD, on_click=export_all_data),
             ft.ElevatedButton(t("import_data"), icon=ft.Icons.DOWNLOAD, on_click=import_data),
         ], wrap=True),
@@ -1464,6 +1480,7 @@ def main(page: ft.Page):
         body,
     ]))
     refresh_all()
+    run_bg(purge_work)
     if not cfg.initial_scan_done:
         cfg.initial_scan_done = True
         cfg.save(cfg_path)

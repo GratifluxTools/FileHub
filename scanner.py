@@ -10,6 +10,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from app_files import is_app_dir, is_app_file, is_app_relpath, is_build_name
 from categories import category_of, get_ext
 from paths import join_path, norm
 
@@ -124,13 +125,18 @@ def scan_location(db, loc, opts, cancel, on_progress=None, start=None):
                 if not opts.include_hidden and _is_hidden(name, st):
                     continue
                 if stat.S_ISDIR(st.st_mode):
-                    if not _skip_dir(name, entry.path, names_lower, opts, skip_norm):
-                        stack.append(entry.path)
+                    if _skip_dir(name, entry.path, names_lower, opts, skip_norm):
+                        continue
+                    if is_build_name(name) or is_app_dir(entry.path):
+                        continue  # FileHub 自身のフォルダ（名前が変わっていても中身で判定）
+                    stack.append(entry.path)
                 elif stat.S_ISREG(st.st_mode):
                     if name.lower() in SYSTEM_FILE_NAMES:
                         continue
                     ext = get_ext(name)
                     rel = os.path.relpath(entry.path, root).replace(os.sep, "/")
+                    if is_app_relpath(rel, name) or (ext in ("zip", "json") and is_app_file(entry.path, name)):
+                        continue  # 配布 zip・書き出しファイルなど、FileHub 自身のもの
                     batch.append((rel, name, ext, category_of(ext), st.st_size, st.st_mtime))
                     if len(batch) >= BATCH_SIZE:
                         db.upsert_files(loc["id"], batch, started)
@@ -193,6 +199,8 @@ def list_child_dirs(path, opts):
             if not opts.include_hidden and _is_hidden(entry.name, st):
                 continue
             if _skip_dir(entry.name, entry.path, names_lower, opts, skip_norm):
+                continue
+            if is_build_name(entry.name) or is_app_dir(entry.path):
                 continue
             out.append(entry.path)
     return sorted(out, key=lambda p: os.path.basename(p).lower())

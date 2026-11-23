@@ -68,6 +68,7 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 - 候補にないフォルダは「フォルダを追加」で選べます。
 - 対象は **自分のアカウント（ホームフォルダ）の中だけ** です。他のユーザーのフォルダや、システムの領域は選べません。
 - 次は**含まれません**：システムフォルダ（Windows・Program Files など）、Windows の隠し・システムファイル、
+- **FileHub 自身のファイルは含めません**：プログラム一式（`file_hub.exe` とアプリ本体の組み合わせ）、索引・設定のフォルダ、書き出した `.json`、配布用の zip（`FileHub-single-windows-x64.zip` など）が対象です。名前ではなく中身で判定するので、フォルダ名を変えても除外されます。既に登録されていたものは、起動時・スキャンの後・メンテナンスの「FileHub自身のファイルを索引から外す」で索引から外れます（ファイルは消えません）。
   `AppData`（設定で含められます）、`node_modules` `.git` `__pycache__` などの作業用フォルダ、シンボリックリンク。
 - 「隠しファイル・フォルダを含める」を選ぶと、ドット（`.`）で始まるものも対象になります。
 
@@ -290,6 +291,7 @@ On first start you choose folders to index. Candidates are the common folders in
 
 - Only folders **inside your home folder** (your own account) can be used.
 - System folders, Windows hidden/system files, symbolic links, `AppData` (optional), and work folders such as `node_modules` and `.git` are **not** included.
+- **FileHub's own files are never included**: the program folder (`file_hub.exe` with the app files), the index and settings folder, exported `.json` files, and build zips such as `FileHub-single-windows-x64.zip`. They are recognised by their contents, not their names, so renaming the folder does not help them slip in. Entries registered earlier are removed from the index at startup, after a scan, or with "Remove FileHub's own files from the index" in Maintenance (files are not deleted).
 - Hidden files can be included with a setting. You can change the scope any time from **Locations → Scan settings**.
 
 <a id="using-the-app"></a>

@@ -3,6 +3,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field, fields
 
+from app_files import write_data_marker
 from edition import EDITION
 
 # スキャン時に無視するフォルダ名（大文字小文字は区別しない）
@@ -27,6 +28,7 @@ def data_dir() -> str:
             else:
                 base = os.path.join(os.path.expanduser("~"), ".file_hub")
     os.makedirs(base, exist_ok=True)
+    write_data_marker(base)
     return base
 
 

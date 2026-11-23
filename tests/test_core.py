@@ -990,3 +990,118 @@ def test_volume_identity_and_device_mapping(env, tmp_path, monkeypatch):
     assert dev != here and db.device(dev)["fingerprint"] == "vol:BACKUP"
     assert storage_roots.device_for_path(db, str(drive / "Docs"), here) == dev
     assert storage_roots.connected_root(db.device(dev)) == str(drive)
+
+
+# ---------- FileHub 自身のファイルの除外 ----------
+def _make_install(d):
+    """配布物（プログラム一式）と同じ中身のフォルダを作る。"""
+    (d / "data" / "flutter_assets").mkdir(parents=True, exist_ok=True)
+    (d / "file_hub.exe").write_bytes(b"MZ")
+    (d / "data" / "app.so").write_bytes(b"\x7fELF")
+    (d / "site-packages" / "httpcore").mkdir(parents=True, exist_ok=True)
+    (d / "site-packages" / "httpcore" / "__init__.py").write_text("x", encoding="utf-8")
+
+
+def test_downloads_scan_skips_install_folder_even_if_renamed(env):
+    from scanner import scan_location
+    from app_files import is_app_dir
+    dl = env["home"] / "Downloads"
+    dl.mkdir()
+    (dl / "notes.txt").write_text("mine", encoding="utf-8")
+    _make_install(dl / "FileHub-single-windows-x64")
+    _make_install(dl / "おかしな名前の展開先")  # 名前が変わっていても中身で判定する
+    assert is_app_dir(str(dl / "おかしな名前の展開先"))
+    db = make_db(env)
+    lid = db.add_location("Downloads", str(dl), "local")
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    names = sorted(r["relpath"] for r in db.search({"include_missing": True}, limit=1000))
+    assert names == ["notes.txt"]
+
+
+def test_data_folder_is_skipped_by_marker_or_by_config_plus_index(env):
+    from scanner import scan_location
+    docs = env["home"] / "Stuff"
+    (docs / "moved-data").mkdir(parents=True)
+    (docs / "moved-data" / "index.db").write_bytes(b"SQLite format 3\x00")
+    (docs / "moved-data" / "config.json").write_text("{}", encoding="utf-8")
+    (docs / "other-data").mkdir()
+    (docs / "other-data" / "filehub-data.marker").write_text("{}", encoding="utf-8")
+    (docs / "other-data" / "instance.lock").write_text("", encoding="utf-8")
+    (docs / "keep.txt").write_text("mine", encoding="utf-8")
+    db = make_db(env)
+    lid = db.add_location("Stuff", str(docs), "local")
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    assert [r["relpath"] for r in db.search({"include_missing": True}, limit=100)] == ["keep.txt"]
+
+
+def test_export_and_build_zip_are_recognised_by_content_not_name(env):
+    import zipfile
+    from app_files import is_app_file
+    d = env["home"] / "Downloads"
+    d.mkdir()
+    (d / "whatever.json").write_text('{"format": "filehub-export", "version": 1}', encoding="utf-8")
+    (d / "my-data.json").write_text('{"name": "mine"}', encoding="utf-8")
+    with zipfile.ZipFile(d / "renamed-archive.zip", "w") as z:
+        z.writestr("file_hub.exe", "MZ")
+        z.writestr("edition.py", "EDITION='x'")
+    with zipfile.ZipFile(d / "photos.zip", "w") as z:
+        z.writestr("cat.jpg", "x")
+    assert is_app_file(str(d / "whatever.json"), "whatever.json")
+    assert not is_app_file(str(d / "my-data.json"), "my-data.json")
+    assert is_app_file(str(d / "renamed-archive.zip"), "renamed-archive.zip")
+    assert not is_app_file(str(d / "photos.zip"), "photos.zip")
+
+
+def test_no_false_positives_for_unrelated_names(env):
+    from app_files import is_app_dir, is_app_relpath
+    notes = env["home"] / "FileHub-notes"          # 名前は似ているが中身は関係ない
+    notes.mkdir()
+    (notes / "todo.txt").write_text("x", encoding="utf-8")
+    assert not is_app_dir(str(notes))
+    assert not is_app_relpath("FileHub-notes/todo.txt", "todo.txt")
+    only_config = env["home"] / "Tools"           # config.json だけでは索引とはみなさない
+    only_config.mkdir()
+    (only_config / "config.json").write_text("{}", encoding="utf-8")
+    assert not is_app_dir(str(only_config))
+    assert is_app_relpath("FileHub-single-windows-x64/x.py", "x.py")
+    assert not is_app_relpath("FileHub-single-notes/x.py", "x.py")
+
+
+def test_purge_removes_existing_app_records_but_not_user_files(env):
+    from app_files import find_app_records
+    dl = env["home"] / "Downloads"
+    dl.mkdir()
+    (dl / "mine.txt").write_text("mine", encoding="utf-8")
+    _make_install(dl / "FileHub-single-windows-x64")
+    db = make_db(env)
+    lid = db.add_location("Downloads", str(dl), "local")
+    # 以前の版で登録されてしまった状態を作る（除外が無かった頃の索引）
+    db.upsert_files(lid, [
+        ("mine.txt", "mine.txt", "txt", "document", 4, 1.0),
+        ("FileHub-single-windows-x64/file_hub.exe", "file_hub.exe", "exe", "program", 2, 1.0),
+        ("FileHub-single-windows-x64/site-packages/httpcore/__init__.py", "__init__.py", "py", "code", 1, 1.0),
+        ("Renamed/file_hub.exe", "file_hub.exe", "exe", "program", 9, 1.0),
+    ], 1.0)
+    ids = find_app_records(db.all_file_rows())
+    assert len(ids) == 3  # 配布フォルダの2件と、名前を変えて残った実行ファイル1件
+    db.delete_files(ids)
+    assert [r["relpath"] for r in db.search({"include_missing": True}, limit=100)] == ["mine.txt"]
+
+
+def test_tree_does_not_offer_app_folders(env):
+    from scanner import ScanOptions, list_child_dirs
+    home = env["home"]
+    _make_install(home / "Downloads" / "FileHub-portable-linux-x64")
+    (home / "Downloads" / "Pics").mkdir(parents=True)
+    names = [os.path.basename(p) for p in list_child_dirs(str(home / "Downloads"), ScanOptions())]
+    assert names == ["Pics"]
+
+
+def test_app_folder_cannot_be_registered_by_path(env):
+    from app_files import is_app_dir
+    d = env["home"] / "Downloads" / "anything"
+    _make_install(d)
+    assert is_app_dir(str(d))
+    # 登録画面の検査と同じ判定（ensure_location の先頭で使う）
+    from app_files import is_build_name
+    assert is_build_name("FileHub-single-windows-x64")
