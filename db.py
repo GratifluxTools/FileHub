@@ -359,17 +359,29 @@ class Database:
         if flt.get("mtime_to") is not None:
             clauses.append("f.mtime < ?")
             args.append(flt["mtime_to"])
+        locs = [int(x) for x in flt.get("location_ids") or []]
         if flt.get("location_id"):
-            clauses.append("f.location_id = ?")
-            args.append(flt["location_id"])
-        if flt.get("device_id"):
-            clauses.append("l.device_id = ?")
-            args.append(flt["device_id"])
+            locs.append(int(flt["location_id"]))
+        if locs:
+            clauses.append(f"f.location_id IN ({','.join('?' * len(locs))})")
+            args += locs
+        devs = [int(x) for x in flt.get("device_ids") or []]
+        if devs:
+            clauses.append(f"l.device_id IN ({','.join('?' * len(devs))})")
+            args += devs
         if not flt.get("include_missing"):
             clauses.append("f.missing = 0")
-        for tid in flt.get("tags") or []:
-            clauses.append("EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = f.id AND ft.tag_id = ?)")
-            args.append(tid)
+        tags = [int(x) for x in flt.get("tags") or []]
+        if tags and flt.get("tags_any"):
+            # いずれかのタグを含む
+            clauses.append(f"""EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = f.id
+                                AND ft.tag_id IN ({','.join('?' * len(tags))}))""")
+            args += tags
+        else:
+            # すべてのタグを含む
+            for tid in tags:
+                clauses.append("EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = f.id AND ft.tag_id = ?)")
+                args.append(tid)
         return " AND ".join(clauses) or "1=1", args
 
     def search(self, flt, limit=300, offset=0):
@@ -378,9 +390,12 @@ class Database:
         rows = self._rows(f"""
             SELECT f.id, f.relpath, f.name, f.ext, f.category, f.size, f.mtime, f.missing, f.memo,
                    l.name AS location_name, l.root AS root, l.mode AS location_mode,
+                   d.name AS device_name, d.fingerprint AS device_fp,
+                   d.account AS device_account, d.dtype AS device_dtype,
                    (SELECT GROUP_CONCAT(tg.name, ', ') FROM file_tags ft
                     JOIN tags tg ON tg.id = ft.tag_id WHERE ft.file_id = f.id) AS tags
             FROM files f JOIN locations l ON l.id = f.location_id
+            LEFT JOIN devices d ON d.id = l.device_id
             WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?""", args + [limit, offset])
         for r in rows:
             r["path"] = join_path(r["root"], r["relpath"])

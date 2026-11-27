@@ -212,6 +212,7 @@ _PAIRS = {
                      "アプリを一度完全に閉じて、再起動してください。次回起動時から新しい言語で表示されます。"),
     "lang_restart_title": ("Language changed", "言語を変更しました"),
     "reset_filters": ("Reset filters", "絞り込みをリセット"),
+    "tags_any": ("Match any of the selected tags (otherwise all must match)", "選んだタグのいずれかを含む（オフの時は、すべて含む）"),
     "purge_app_files": ("Remove FileHub's own files from the index", "FileHub自身のファイルを索引から外す"),
     "purging": ("Checking for FileHub's own files...", "FileHub自身のファイルを確認しています..."),
     "purged": ("Removed {n} of FileHub's own file(s) from the index.", "FileHub自身のファイルを {n} 件、索引から外しました。"),

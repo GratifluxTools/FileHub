@@ -100,6 +100,14 @@ def device_title(name, fingerprint, account, dtype):
     return f"{text} · {account or t('type_' + (dtype or 'other'))}"
 
 
+def short_device(r):
+    """検索結果に出すデバイス名。このPCには「(このPC)」を付ける。"""
+    name = r.get("device_name") or "-"
+    if r.get("device_fp") and r.get("device_fp") == CUR_FP:
+        return f"({t('this_device')}) {name}"
+    return name
+
+
 def section(title, *controls):
     return ft.Container(
         padding=ft.padding.only(top=12),
@@ -250,8 +258,8 @@ def main(page: ft.Page):
     f_text = ft.TextField(label=t("keyword"), hint_text=t("search_hint"), width=380,
                           on_submit=lambda _: run_search())
     # 絞り込み条件は dict で持ち、ダイアログを開くたびに部品を作り直す
-    filt = {"cat": "", "ext": "", "loc": "", "tag": "", "min": "", "max": "",
-            "from": "", "to": "", "sort": "name", "missing": False}
+    filt = {"cats": [], "devs": [], "locs": [], "tags": [], "tags_any": False,
+            "ext": "", "min": "", "max": "", "from": "", "to": "", "sort": "name", "missing": False}
     filter_label = ft.Text(size=12, color=GREY)
     summary = ft.Text(size=13)
     sel_text = ft.Text(size=12, color=GREY)
@@ -259,7 +267,10 @@ def main(page: ft.Page):
     bulk_tag = ft.TextField(label=t("tag_name"), width=200)
 
     def filter_count():
-        return sum(1 for k, v in filt.items() if k != "sort" and v not in ("", False, None))
+        n = len(filt["cats"]) + len(filt["devs"]) + len(filt["locs"]) + len(filt["tags"])
+        n += sum(1 for k in ("ext", "min", "max", "from", "to") if filt[k])
+        n += 1 if filt["missing"] else 0
+        return n
 
     def update_filter_label():
         n = filter_count()
@@ -272,13 +283,12 @@ def main(page: ft.Page):
                 "exts": [x.strip().lower().lstrip(".") for x in (filt["ext"] or "").split(",") if x.strip()],
                 "sort": filt["sort"] or "name",
                 "include_missing": bool(filt["missing"]),
+                "categories": list(filt["cats"]),
+                "device_ids": [int(x) for x in filt["devs"]],
+                "location_ids": [int(x) for x in filt["locs"]],
+                "tags": [int(x) for x in filt["tags"]],
+                "tags_any": bool(filt["tags_any"]),
             }
-            if filt["cat"]:
-                flt["categories"] = [filt["cat"]]
-            if filt["loc"]:
-                flt["location_id"] = int(filt["loc"])
-            if filt["tag"]:
-                flt["tags"] = [int(filt["tag"])]
             if (filt["min"] or "").strip():
                 flt["min_size"] = int(float(filt["min"]) * MB)
             if (filt["max"] or "").strip():
@@ -288,33 +298,42 @@ def main(page: ft.Page):
             if (filt["to"] or "").strip():
                 flt["mtime_to"] = parse_date(filt["to"], end=True)
         except ValueError:
-            snack(t("invalid_input"))
+            snack(t("invalid_input"), error=True)
             return None
         return flt
 
     def reset_filters(_=None):
-        filt.update(cat="", ext="", loc="", tag="", min="", max="", **{"from": "", "to": ""},
-                    sort="name", missing=False)
+        filt.update(cats=[], devs=[], locs=[], tags=[], tags_any=False, ext="", min="", max="",
+                    **{"from": "", "to": ""}, sort="name", missing=False)
         update_filter_label()
         run_search()
 
     def open_filters(_=None):
+        """絞り込みの画面。種類・デバイス・場所・タグはチェックボックスで複数選べる。"""
+        cat_sel, dev_sel = set(filt["cats"]), set(filt["devs"])
+        loc_sel, tag_sel = set(filt["locs"]), set(filt["tags"])
+
+        def checks(options, selected):
+            """options: (値, 表示名) のリスト。選ばれた値は selected に入る。"""
+            return ft.Row([
+                ft.Checkbox(label=label, value=(value in selected),
+                            on_change=lambda e, v=value: (selected.add(v) if e.control.value else selected.discard(v)))
+                for value, label in options
+            ], wrap=True, spacing=12)
+
+        def group(title, control):
+            return ft.Column([ft.Text(title, weight=ft.FontWeight.BOLD), control], spacing=4)
+
+        devs = db.devices()
         locs = db.locations()
         tags = db.all_tags()
-        loc_keys = {str(l["id"]) for l in locs}
-        tag_keys = {str(tg["id"]) for tg in tags}
-        f_cat = ft.Dropdown(label=t("category"), width=260, value=filt["cat"], options=(
-            [ft.dropdown.Option(key="", text=t("all"))]
-            + [ft.dropdown.Option(key=c, text=t("cat_" + c)) for c in CATEGORY_ORDER]))
+        dev_options = [(str(d["id"]), device_title(d["name"], d["fingerprint"], d["account"], d["dtype"]))
+                       for d in devs]
+        loc_options = [(str(l["id"]), f"{l['name']}") for l in locs]
+        tag_options = [(str(tg["id"]), tg["name"]) for tg in tags]
+        cat_options = [(c, t("cat_" + c)) for c in CATEGORY_ORDER]
+
         f_ext = ft.TextField(label=t("extensions"), hint_text="jpg, pdf", width=260, value=filt["ext"])
-        f_loc = ft.Dropdown(label=t("location"), width=260,
-                            value=filt["loc"] if filt["loc"] in loc_keys else "",
-                            options=[ft.dropdown.Option(key="", text=t("all"))] + [
-                                ft.dropdown.Option(key=str(l["id"]), text=l["name"]) for l in locs])
-        f_tag = ft.Dropdown(label=t("tag"), width=260,
-                            value=filt["tag"] if filt["tag"] in tag_keys else "",
-                            options=[ft.dropdown.Option(key="", text=t("all"))] + [
-                                ft.dropdown.Option(key=str(tg["id"]), text=tg["name"]) for tg in tags])
         f_min = ft.TextField(label=t("min_mb"), width=260, value=filt["min"])
         f_max = ft.TextField(label=t("max_mb"), width=260, value=filt["max"])
         f_from = ft.TextField(label=t("modified_from"), hint_text="2025-01-01", width=260, value=filt["from"])
@@ -326,10 +345,12 @@ def main(page: ft.Page):
             ft.dropdown.Option(key="path", text=t("sort_path")),
         ])
         f_missing = ft.Checkbox(label=t("include_missing"), value=filt["missing"])
+        f_tags_any = ft.Checkbox(label=t("tags_any"), value=filt["tags_any"])
 
         def apply(_=None):
-            filt.update(cat=f_cat.value or "", ext=f_ext.value or "", loc=f_loc.value or "",
-                        tag=f_tag.value or "", min=f_min.value or "", max=f_max.value or "",
+            filt.update(cats=sorted(cat_sel), devs=sorted(dev_sel, key=int), locs=sorted(loc_sel, key=int),
+                        tags=sorted(tag_sel, key=int), tags_any=bool(f_tags_any.value),
+                        ext=f_ext.value or "", min=f_min.value or "", max=f_max.value or "",
                         **{"from": f_from.value or "", "to": f_to.value or ""},
                         sort=f_sort.value or "name", missing=bool(f_missing.value))
             update_filter_label()
@@ -337,9 +358,13 @@ def main(page: ft.Page):
             run_search()
 
         show_screen(t("filters"), [
-            ft.Row([f_cat, f_ext], wrap=True), ft.Row([f_loc, f_tag], wrap=True),
-            ft.Row([f_min, f_max], wrap=True), ft.Row([f_from, f_to], wrap=True),
-            ft.Row([f_sort, f_missing], wrap=True),
+            group(t("category"), checks(cat_options, cat_sel)),
+            group(t("device"), checks(dev_options, dev_sel)),
+            group(t("location"), checks(loc_options, loc_sel)),
+            group(t("tag"), ft.Column([checks(tag_options, tag_sel), f_tags_any], spacing=4)),
+            ft.Row([f_ext, f_min, f_max], wrap=True),
+            ft.Row([f_from, f_to, f_sort], wrap=True),
+            f_missing,
             ft.Row([
                 ft.ElevatedButton(t("filter_apply"), icon=ft.Icons.CHECK, on_click=apply),
                 ft.ElevatedButton(t("filter_reset"), icon=ft.Icons.RESTART_ALT,
@@ -364,7 +389,7 @@ def main(page: ft.Page):
         line2 = f"{fmt_size(r['size'])} · {fmt_time(r['mtime'])}"
         if r.get("tags"):
             line2 += f" · # {r['tags']}"
-        where = f"{r['location_name']} / {r['relpath']}"
+        where = f"{short_device(r)} / {r['location_name']} / {r['relpath']}"
         return ft.ListTile(
             leading=ft.Row([
                 ft.Checkbox(value=fid in selected, on_change=lambda e, i=fid: toggle_select(i, e.control.value)),
@@ -422,9 +447,9 @@ def main(page: ft.Page):
             try:
                 with open(path, "w", newline="", encoding="utf-8-sig") as fh:
                     w = csv.writer(fh)
-                    w.writerow(["name", "path", "location", "category", "ext", "size", "modified", "tags", "memo"])
+                    w.writerow(["name", "path", "device", "location", "category", "ext", "size", "modified", "tags", "memo"])
                     for r in rows:
-                        w.writerow([r["name"], r["path"], r["location_name"], r["category"], r["ext"],
+                        w.writerow([r["name"], r["path"], short_device(r), r["location_name"], r["category"], r["ext"],
                                     r["size"], fmt_time(r["mtime"]), r.get("tags") or "", r["memo"]])
                 snack(t("exported", n=len(rows), path=path))
             except OSError as ex:
@@ -451,14 +476,14 @@ def main(page: ft.Page):
     ])
 
     def search_location(lid):
-        filt["loc"] = str(lid)
+        filt.update(locs=[str(lid)], devs=[], cats=[], tags=[])
         tabs.selected_index = 0
         update_filter_label()
         show_tabs()
         run_search()
 
     def search_tag(tid):
-        filt["tag"] = str(tid)
+        filt.update(tags=[str(tid)], locs=[], devs=[], cats=[], tags_any=False)
         tabs.selected_index = 0
         update_filter_label()
         show_tabs()

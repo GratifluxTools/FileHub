@@ -1105,3 +1105,77 @@ def test_app_folder_cannot_be_registered_by_path(env):
     # 登録画面の検査と同じ判定（ensure_location の先頭で使う）
     from app_files import is_build_name
     assert is_build_name("FileHub-single-windows-x64")
+
+
+def test_search_multi_select_and_device_names(env):
+    from scanner import scan_location
+    db = make_db(env)
+    a = db.ensure_current_device("PC", "windows", "fp-here")
+    b = db.add_device("Google Drive", "gdrive", "taro@example.com")
+    d1, d2 = env["home"] / "A", env["home"] / "B"
+    d1.mkdir(parents=True)
+    d2.mkdir(parents=True)
+    (d1 / "one.pdf").write_bytes(b"%PDF")
+    (d1 / "two.jpg").write_bytes(b"x")
+    la = db.add_location("A", str(d1), "local", a, "scan")
+    scan_location(db, db.location(la), opts(), threading.Event())
+    lb = db.add_location("B", "manual://b", "manual", b, "manual")
+    db.upsert_files(lb, [("three.pdf", "three.pdf", "pdf", "document", 0, 0.0),
+                         ("four.txt", "four.txt", "txt", "document", 0, 0.0)], 1.0)
+    # 種類は「文書」と「画像」の両方（いずれか）
+    names = {r["name"] for r in db.search({"categories": ["document", "image"], "include_missing": True})}
+    assert names == {"one.pdf", "two.jpg", "three.pdf", "four.txt"}
+    # デバイスは複数（いずれか）
+    names = {r["name"] for r in db.search({"device_ids": [a, b], "include_missing": True})}
+    assert len(names) == 4
+    names = {r["name"] for r in db.search({"device_ids": [b], "include_missing": True})}
+    assert names == {"three.pdf", "four.txt"}
+    # 場所は複数
+    names = {r["name"] for r in db.search({"location_ids": [la, lb], "categories": ["document"],
+                                           "include_missing": True})}
+    assert names == {"one.pdf", "three.pdf", "four.txt"}
+    # タグ：すべて含む／いずれか含む
+    f1 = db.search({"text": "one"})[0]["id"]
+    f3 = db.search({"text": "three"})[0]["id"]
+    db.add_tag(f1, "tax")
+    db.add_tag(f1, "2025")
+    db.add_tag(f3, "tax")
+    tax = [tg["id"] for tg in db.all_tags() if tg["name"] == "tax"][0]
+    y25 = [tg["id"] for tg in db.all_tags() if tg["name"] == "2025"][0]
+    assert [r["name"] for r in db.search({"tags": [tax, y25]})] == ["one.pdf"]
+    assert {r["name"] for r in db.search({"tags": [tax, y25], "tags_any": True})} == {"one.pdf", "three.pdf"}
+    # 検索結果にはデバイス名が入る
+    row = db.search({"text": "three"})[0]
+    assert row["device_name"] == "Google Drive"
+
+
+def test_filter_page_checkboxes_select_several_categories(env):
+    import flet as ft
+    from scanner import scan_location
+    docs = env["home"] / "Documents"
+    docs.mkdir(exist_ok=True)
+    (docs / "a.pdf").write_bytes(b"%PDF")
+    (docs / "b.jpg").write_bytes(b"x")
+    (docs / "c.mp3").write_bytes(b"x")
+    db = make_db(env)
+    lid = db.add_location("Documents", str(docs), "local")
+    scan_location(db, db.location(lid), opts(), threading.Event())
+    app, fake, body = _open_app(env)
+    search_view = body.content.tabs[0].content
+    # 絞り込みを開き、「文書」と「画像」をチェックする
+    [c for c in _walk(search_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("filters")][0].on_click(None)
+    boxes = [c for c in _walk(body) if isinstance(c, ft.Checkbox)]
+    for cb in boxes:
+        if cb.label in (app.t("cat_document"), app.t("cat_image")):
+            cb.value = True
+            cb.on_change(mock.MagicMock(control=cb))
+    [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("filter_apply")][0].on_click(None)
+    # 検索結果は文書と画像だけ（音声は出ない）
+    rows = [c for c in _walk(body.content.tabs[0].content) if isinstance(c, ft.ListTile)]
+    titles = {c.title.value for c in rows}
+    assert "a.pdf" in titles and "b.jpg" in titles and "c.mp3" not in titles
+    # 結果の行は「デバイス名 / 場所 / パス」。このPCのデバイスには「(このPC)」が付く
+    sub = [c.subtitle.value for c in rows if c.title.value == "a.pdf"][0]
+    device_part, location_part, _path = sub.split("\n")[0].split(" / ")
+    assert device_part.startswith(f"({app.t('this_device')}) ")
+    assert location_part == "Documents"

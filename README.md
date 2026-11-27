@@ -83,6 +83,8 @@ GitHub の Releases（または Actions の成果物）から、次のどれか�
 #### 1. 検索（ファイルがどこにあるか探す）
 - **キーワード**：ファイル名・パス・メモを検索します。空白で区切ると「すべての語を含む」で探します（例：`請求 2025`）。
 - **絞り込み**（「絞り込み」ボタン）：拡張子（`pdf, xlsx` のようにカンマで複数指定）、カテゴリ、場所、タグ、サイズ（MB）、更新日（`2025-01-01` の形式）、並び順、欠落ファイルも含めるか。条件の数は検索の横に表示されます。リセットで全部外せます。
+  - 種類・デバイス・場所・タグは、チェックボックスで**複数選べます**（種類・デバイス・場所は「いずれか」、タグは既定で「すべて含む」。「選んだタグのいずれかを含む」にすることもできます）。
+  - 検索結果の各行は「デバイス名 / 場所 / パス」の順に表示されます（このPCには「(このPC)」が付きます）。
 - **欠落ファイルも含める**：ディスクから消えたファイルも表示します（`[欠落]` と表示されます）。
 - 結果の上に **「N件（うち欠落 M件）」** が出ます。「該当するファイルはありません」なら、そのような条件のファイルは無いと分かります。
 - **CSVに書き出し**：検索結果を表計算ソフトで開ける CSV にします（名前・パス・場所・タグ・メモなど）。
@@ -299,6 +301,7 @@ On first start you choose folders to index. Candidates are the common folders in
 Tabs: **Search**, **Locations**, **Tags**, **Settings**. Click a file name to open its details (← to go back).
 
 - **Search**: the keyword box (all words must match name, path or memo). Other conditions are on the **Filters** page (press Reset filters to clear them): extensions (`pdf, xlsx`), category, location, tag, size in MB, modified date (`2025-01-01`), include missing files, sort order. The summary shows the count and how many are missing, so you can quickly check whether matching files exist.
+  - Kinds, devices, locations and tags can be **multi-selected** with checkboxes (kinds, devices and locations match any; tags match all by default, or any with the option). Each result row shows "device / location / path".
 - **Multi-select**: add a tag to all selected files, compress the selection into a zip, or export the results to CSV.
 - **Details**: open, show in folder, copy path, rename (keeps tags, memo and links), move, compress, remove from index (keeps the file), or delete (to the Recycle Bin/Trash when enabled).
 - **Preview and edit**: images are shown; text formats (txt, md, csv, json, html, code, log, etc.) can be edited and saved in their original encoding (UTF-8 or Shift_JIS); Office, PDF, ODF and RTF show extracted text (read-only). The preview limit is 100 MB by default (Settings).
