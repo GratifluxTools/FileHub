@@ -1149,7 +1149,7 @@ def test_search_multi_select_and_device_names(env):
     assert row["device_name"] == "Google Drive"
 
 
-def test_filter_page_checkboxes_select_several_categories(env):
+def test_filter_page_category_is_single_and_locations_are_device_labelled(env):
     import flet as ft
     from scanner import scan_location
     docs = env["home"] / "Documents"
@@ -1162,20 +1162,43 @@ def test_filter_page_checkboxes_select_several_categories(env):
     scan_location(db, db.location(lid), opts(), threading.Event())
     app, fake, body = _open_app(env)
     search_view = body.content.tabs[0].content
-    # 絞り込みを開き、「文書」と「画像」をチェックする
     [c for c in _walk(search_view) if isinstance(c, ft.ElevatedButton) and c.text == app.t("filters")][0].on_click(None)
-    boxes = [c for c in _walk(body) if isinstance(c, ft.Checkbox)]
-    for cb in boxes:
-        if cb.label in (app.t("cat_document"), app.t("cat_image")):
-            cb.value = True
-            cb.on_change(mock.MagicMock(control=cb))
+    # カテゴリは1つだけ選ぶプルダウン
+    cat = [c for c in _walk(body) if isinstance(c, ft.Dropdown) and c.label == app.t("category")]
+    assert cat, "category should be a dropdown"
+    cat[0].value = "document"
+    # 場所の一覧は「デバイス名 / 場所名」
+    loc_boxes = [c for c in _walk(body) if isinstance(c, ft.Checkbox)
+                 and c.label and c.label.endswith(" / Documents")]
+    assert loc_boxes and loc_boxes[0].label.startswith(f"({app.t('this_device')}) ")
+    assert not [c for c in _walk(body) if isinstance(c, ft.Checkbox) and c.label == app.t("cat_document")]
     [c for c in _walk(body) if isinstance(c, ft.ElevatedButton) and c.text == app.t("filter_apply")][0].on_click(None)
-    # 検索結果は文書と画像だけ（音声は出ない）
+    titles = {c.title.value for c in _walk(body.content.tabs[0].content) if isinstance(c, ft.ListTile)}
+    assert titles == {"a.pdf"}
     rows = [c for c in _walk(body.content.tabs[0].content) if isinstance(c, ft.ListTile)]
-    titles = {c.title.value for c in rows}
-    assert "a.pdf" in titles and "b.jpg" in titles and "c.mp3" not in titles
-    # 結果の行は「デバイス名 / 場所 / パス」。このPCのデバイスには「(このPC)」が付く
-    sub = [c.subtitle.value for c in rows if c.title.value == "a.pdf"][0]
-    device_part, location_part, _path = sub.split("\n")[0].split(" / ")
-    assert device_part.startswith(f"({app.t('this_device')}) ")
-    assert location_part == "Documents"
+    sub = rows[0].subtitle.value.split("\n")[0]
+    assert sub.split(" / ")[1] == "Documents"
+
+
+def test_cleanup_notice_only_on_first_launch(env):
+    import time as _time
+    import flet as ft
+    import main as app
+
+    def start(initial_done):
+        import json as _json
+        (env["data"] / "config.json").write_text(_json.dumps({"initial_scan_done": initial_done}), encoding="utf-8")
+        fake = mock.MagicMock()
+        fake.overlay = []
+        fake.run_thread = lambda fn, *a, **k: fn(*a, **k)
+        with mock.patch.object(ft, "FilePicker", mock.MagicMock()):
+            app.main(fake)
+        _time.sleep(0.3)  # 起動時の整理はバックグラウンドで行われる
+        return fake.add.call_args_list[-1].args[0]
+
+    # 2回目以降の起動では、整理の通知は出ない
+    root = start(True)
+    assert not (root.controls[1].value or "").startswith("FileHub")
+    # 初回起動では、整理の結果を表示する
+    root = start(False)
+    assert (root.controls[1].value or "").startswith(app.t("purged", n=0)[:10])

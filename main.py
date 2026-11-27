@@ -198,8 +198,8 @@ def main(page: ft.Page):
             ft.ElevatedButton(t("ok"), icon=ft.Icons.CHECK, on_click=ok),
         ], wrap=True)], back=back)
 
-    def run_bg(work, busy_msg=None):
-        """重い処理をバックグラウンドで行い、終わったら結果を表示して一覧を更新する。"""
+    def run_bg(work, busy_msg=None, show=True):
+        """重い処理をバックグラウンドで行い、終わったら一覧を更新する。show=False なら結果を表示しない。"""
         if busy_msg:
             snack(busy_msg)
 
@@ -210,7 +210,8 @@ def main(page: ft.Page):
                 msg = t("op_failed", ex=ex)
 
             def done():
-                snack(msg)
+                if show:
+                    snack(msg)
                 refresh_all()
 
             page.run_thread(done)
@@ -258,7 +259,7 @@ def main(page: ft.Page):
     f_text = ft.TextField(label=t("keyword"), hint_text=t("search_hint"), width=380,
                           on_submit=lambda _: run_search())
     # 絞り込み条件は dict で持ち、ダイアログを開くたびに部品を作り直す
-    filt = {"cats": [], "devs": [], "locs": [], "tags": [], "tags_any": False,
+    filt = {"cat": "", "devs": [], "locs": [], "tags": [], "tags_any": False,
             "ext": "", "min": "", "max": "", "from": "", "to": "", "sort": "name", "missing": False}
     filter_label = ft.Text(size=12, color=GREY)
     summary = ft.Text(size=13)
@@ -267,7 +268,7 @@ def main(page: ft.Page):
     bulk_tag = ft.TextField(label=t("tag_name"), width=200)
 
     def filter_count():
-        n = len(filt["cats"]) + len(filt["devs"]) + len(filt["locs"]) + len(filt["tags"])
+        n = (1 if filt["cat"] else 0) + len(filt["locs"]) + len(filt["tags"])
         n += sum(1 for k in ("ext", "min", "max", "from", "to") if filt[k])
         n += 1 if filt["missing"] else 0
         return n
@@ -283,7 +284,7 @@ def main(page: ft.Page):
                 "exts": [x.strip().lower().lstrip(".") for x in (filt["ext"] or "").split(",") if x.strip()],
                 "sort": filt["sort"] or "name",
                 "include_missing": bool(filt["missing"]),
-                "categories": list(filt["cats"]),
+                "categories": [filt["cat"]] if filt["cat"] else [],
                 "device_ids": [int(x) for x in filt["devs"]],
                 "location_ids": [int(x) for x in filt["locs"]],
                 "tags": [int(x) for x in filt["tags"]],
@@ -303,18 +304,16 @@ def main(page: ft.Page):
         return flt
 
     def reset_filters(_=None):
-        filt.update(cats=[], devs=[], locs=[], tags=[], tags_any=False, ext="", min="", max="",
+        filt.update(cat="", devs=[], locs=[], tags=[], tags_any=False, ext="", min="", max="",
                     **{"from": "", "to": ""}, sort="name", missing=False)
         update_filter_label()
         run_search()
 
     def open_filters(_=None):
-        """絞り込みの画面。種類・デバイス・場所・タグはチェックボックスで複数選べる。"""
-        cat_sel, dev_sel = set(filt["cats"]), set(filt["devs"])
+        """絞り込みの画面。カテゴリは1つ選ぶ。場所は「デバイス名 / 場所名」の一覧から複数選べる。"""
         loc_sel, tag_sel = set(filt["locs"]), set(filt["tags"])
 
         def checks(options, selected):
-            """options: (値, 表示名) のリスト。選ばれた値は selected に入る。"""
             return ft.Row([
                 ft.Checkbox(label=label, value=(value in selected),
                             on_change=lambda e, v=value: (selected.add(v) if e.control.value else selected.discard(v)))
@@ -324,15 +323,14 @@ def main(page: ft.Page):
         def group(title, control):
             return ft.Column([ft.Text(title, weight=ft.FontWeight.BOLD), control], spacing=4)
 
-        devs = db.devices()
         locs = db.locations()
         tags = db.all_tags()
-        dev_options = [(str(d["id"]), device_title(d["name"], d["fingerprint"], d["account"], d["dtype"]))
-                       for d in devs]
-        loc_options = [(str(l["id"]), f"{l['name']}") for l in locs]
+        loc_options = [(str(l["id"]), f"{short_device(l)} / {l['name']}") for l in locs]
         tag_options = [(str(tg["id"]), tg["name"]) for tg in tags]
-        cat_options = [(c, t("cat_" + c)) for c in CATEGORY_ORDER]
 
+        f_cat = ft.Dropdown(label=t("category"), width=260, value=filt["cat"], options=(
+            [ft.dropdown.Option(key="", text=t("all"))]
+            + [ft.dropdown.Option(key=c, text=t("cat_" + c)) for c in CATEGORY_ORDER]))
         f_ext = ft.TextField(label=t("extensions"), hint_text="jpg, pdf", width=260, value=filt["ext"])
         f_min = ft.TextField(label=t("min_mb"), width=260, value=filt["min"])
         f_max = ft.TextField(label=t("max_mb"), width=260, value=filt["max"])
@@ -348,7 +346,7 @@ def main(page: ft.Page):
         f_tags_any = ft.Checkbox(label=t("tags_any"), value=filt["tags_any"])
 
         def apply(_=None):
-            filt.update(cats=sorted(cat_sel), devs=sorted(dev_sel, key=int), locs=sorted(loc_sel, key=int),
+            filt.update(cat=f_cat.value or "", devs=[], locs=sorted(loc_sel, key=int),
                         tags=sorted(tag_sel, key=int), tags_any=bool(f_tags_any.value),
                         ext=f_ext.value or "", min=f_min.value or "", max=f_max.value or "",
                         **{"from": f_from.value or "", "to": f_to.value or ""},
@@ -358,8 +356,7 @@ def main(page: ft.Page):
             run_search()
 
         show_screen(t("filters"), [
-            group(t("category"), checks(cat_options, cat_sel)),
-            group(t("device"), checks(dev_options, dev_sel)),
+            ft.Row([f_cat], wrap=True),
             group(t("location"), checks(loc_options, loc_sel)),
             group(t("tag"), ft.Column([checks(tag_options, tag_sel), f_tags_any], spacing=4)),
             ft.Row([f_ext, f_min, f_max], wrap=True),
@@ -476,14 +473,14 @@ def main(page: ft.Page):
     ])
 
     def search_location(lid):
-        filt.update(locs=[str(lid)], devs=[], cats=[], tags=[])
+        filt.update(locs=[str(lid)], devs=[], cat="", tags=[])
         tabs.selected_index = 0
         update_filter_label()
         show_tabs()
         run_search()
 
     def search_tag(tid):
-        filt.update(tags=[str(tid)], locs=[], devs=[], cats=[], tags_any=False)
+        filt.update(tags=[str(tid)], locs=[], devs=[], cat="", tags_any=False)
         tabs.selected_index = 0
         update_filter_label()
         show_tabs()
@@ -935,7 +932,7 @@ def main(page: ft.Page):
                 scan_bar.visible = False
                 snack(t("scan_cancelled") if cancelled else t("scan_done", n=total))
                 refresh_all()
-                run_bg(purge_work)
+                run_bg(purge_work, show=False)  # スキャン後は通知を出さない
 
             page.run_thread(done)
 
@@ -1505,8 +1502,10 @@ def main(page: ft.Page):
         body,
     ]))
     refresh_all()
-    run_bg(purge_work)
-    if not cfg.initial_scan_done:
+    first_launch = not cfg.initial_scan_done
+    # 整理の結果は、初回起動のときだけ表示する（手動実行は別途表示される）
+    run_bg(purge_work, show=first_launch)
+    if first_launch:
         cfg.initial_scan_done = True
         cfg.save(cfg_path)
         open_registration(defaults=True)
